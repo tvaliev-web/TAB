@@ -17,10 +17,13 @@ let lastProfitSent = 0;
 const MIN_PROFIT_PERCENT = 1.5;
 const FEES_SLIPPAGE = 0.003;
 
-// --- Real contract addresses (Polygon mainnet) ---
-const SUSHI_PAIR_ADDRESS = "0x2e6f6e6b0d8821fa2b9d11f69b4371a0b31ec15d"; // LINK/USDC SushiSwap pair
+// --- Contract addresses ---
+const SUSHI_PAIR_ADDRESS = "0x2e6f6e6b0d8821fa2b9d11f69b4371a0b31ec15d"; // LINK/USDC SushiSwap
 const ODOS_ROUTER_ADDRESS = "0x21bfa3cc3df0c63e91b5f2f5e6d5aa8910c58b11"; // Odos router
+const LINK_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const USDC_ADDRESS = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 
+// --- ABIs ---
 const PAIR_ABI = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)"
 ];
@@ -31,13 +34,13 @@ const ODOS_ABI = [
 async function getSushiPrice() {
   const pair = new ethers.Contract(SUSHI_PAIR_ADDRESS, PAIR_ABI, provider);
   const reserves = await pair.getReserves();
-  return Number(reserves[1]) / Number(reserves[0]); // LINK/USDC
+  return Number(reserves[1]) / Number(reserves[0]);
 }
 
 async function getOdosPrice() {
   const router = new ethers.Contract(ODOS_ROUTER_ADDRESS, ODOS_ABI, provider);
-  const amountOut = await router.getOutputAmount(ethers.parseUnits("1", 18), "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-  return Number(amountOut) / 1e6; // USDC 6 decimals
+  const amountOut = await router.getOutputAmount(ethers.parseUnits("1", 18), LINK_ADDRESS, USDC_ADDRESS);
+  return Number(amountOut) / 1e6;
 }
 
 async function checkArb() {
@@ -61,5 +64,4 @@ async function checkArb() {
   }
 }
 
-// Проверка каждую минуту
 setInterval(checkArb, 60 * 1000);
