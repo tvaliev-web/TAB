@@ -1,18 +1,25 @@
-name: Telegram Test
+name: Link Arbitrage Bot
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # manual trigger
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
           node-version: 20
-      - run: npm install axios
-      - run: node bot.js
+
+      - name: Install dependencies
+        run: npm install axios ethers
+
+      - name: Run bot
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+        run: node bot.js
