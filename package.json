@@ -1,5 +1,5 @@
 {
-  "name": "link-arb-bot",
+  "name": "link-bot",
   "version": "1.0.0",
   "type": "module",
   "main": "bot.js",
@@ -7,7 +7,7 @@
     "start": "node bot.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.7.7",
     "ethers": "^6.16.0"
   }
 }
