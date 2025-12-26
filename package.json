@@ -1,0 +1,15 @@
+{
+  "name": "arb-bot",
+  "version": "1.0.0",
+  "description": "Polygon LINK/USDC arbitrage bot for Telegram",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.16.0",
+    "node-telegram-bot-api": "^0.61.0"
+  }
+}
