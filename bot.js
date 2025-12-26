@@ -1,11 +1,9 @@
 import { ethers } from "ethers";
 import axios from "axios";
 
-// Provider
 const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 
-// Sushi LINK/USDC pair on Polygon
-const pairAddress = "0xc35dadb65012ec5796536bd9864ed8773abc7404";
+const pairAddress = "0xc35dadb65012ec5796536bd9864ed8773abc7404"; // Sushi LINK/USDC
 const pairAbi = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
   "function token0() view returns (address)",
@@ -13,19 +11,22 @@ const pairAbi = [
 ];
 const pairContract = new ethers.Contract(pairAddress, pairAbi, provider);
 
-// Telegram
-async function sendTG(msg) {
+let lastSentPrice = 0;
+
+async function sendTG(message) {
   try {
     await axios.get(`https://api.telegram.org/bot${process.env.TG_TOKEN}/sendMessage`, {
-      params: { chat_id: process.env.TG_CHAT_ID, text: msg }
+      params: {
+        chat_id: process.env.TG_CHAT_ID,
+        text: message
+      }
     });
   } catch(e){ console.log("TG Error:", e.message); }
 }
 
-// State
-let lastSentPrice = 0;
+// Send message on bot start
+await sendTG("Bot started! Monitoring LINK arbitrage...");
 
-// Get Sushi price
 async function getSushiPrice() {
   const [r0,r1] = await pairContract.getReserves();
   const t0 = await pairContract.token0();
@@ -35,13 +36,12 @@ async function getSushiPrice() {
   return price / 1e6; // USDC decimals
 }
 
-// Get Odos price (replace with real API if needed)
+// Placeholder: replace with real Odos sell price
 async function getOdosPrice() {
-  const sushiPrice = await getSushiPrice(); 
-  return sushiPrice * 1.02; // placeholder: +2% sell price
+  const sushiPrice = await getSushiPrice();
+  return sushiPrice * 1.02; // +2% for testing
 }
 
-// Check arbitrage
 async function checkArb() {
   try {
     const buy = await getSushiPrice();
@@ -55,5 +55,5 @@ async function checkArb() {
   } catch(e){ console.log("Price check error:", e.message); }
 }
 
-// Run once
-checkArb();
+// Run check every 60 seconds
+setInterval(checkArb, 60000);
