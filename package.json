@@ -3,10 +3,6 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js"
-  },
   "dependencies": {
     "ethers": "^6.13.4"
   }
