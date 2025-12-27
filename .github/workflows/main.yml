@@ -3,30 +3,24 @@ name: Link Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"   # каждые 10 минут (не 7)
+    - cron: "*/7 * * * *"
 
-concurrency:
-  group: link-bot
-  cancel-in-progress: true
+permissions:
+  contents: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      # кеш state.json чтобы помнить последний алерт и не спамить
-      - name: Restore state cache
-        uses: actions/cache@v4
-        with:
-          path: state.json
-          key: state-${{ github.repository }}-${{ github.ref_name }}
-          restore-keys: |
-            state-${{ github.repository }}-
 
       - name: Install deps
         run: npm install
@@ -36,14 +30,21 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
-          ODOS_API_KEY: ${{ secrets.ODOS_API_KEY }}
-          THRESHOLD_PCT: "1.0"
-          MIN_ALERT_GAP_MIN: "30"
-          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'cron' }}
+          PROFIT_THRESHOLD: "1.0"
+          COOLDOWN_MINUTES: "60"
+          MIN_CHANGE_PCT: "0.25"
+          EVENT_NAME: ${{ github.event_name }}
         run: node bot.js
 
-      - name: Save state cache
-        uses: actions/cache@v4
-        with:
-          path: state.json
-          key: state-${{ github.repository }}-${{ github.ref_name }}
+      - name: Commit state.json only if changed
+        run: |
+          git status --porcelain
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update state.json"
+            git push
+          else
+            echo "No state changes"
+          fi
