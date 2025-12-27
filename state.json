@@ -1,4 +1,5 @@
 {
-  "lastSentAt": 0,
+  "lastStartAt": 0,
+  "lastAlertAt": 0,
   "lastProfit": -999
 }
