@@ -1,5 +1,5 @@
 {
-  "lastStartAt": 0,
-  "lastAlertAt": 0,
-  "lastProfit": -999
+  "lastStartSentAt": 0,
+  "lastSignalSentAt": 0,
+  "lastSignalKey": ""
 }
