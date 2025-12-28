@@ -1,48 +1,48 @@
 name: Link Arb Bot
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
 
 permissions:
-  contents: write
+  contents: write
 
 jobs:
-  run:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Install deps
-        run: npm install
+      - name: Install deps
+        run: npm install
 
-      - name: Run bot
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-          MIN_PROFIT_PCT: "1"
-          PROFIT_STEP_PCT: "0.25"
-          COOLDOWN_SEC: "600"
-          BIG_JUMP_BYPASS: "1.0"
-          MIN_SECONDS_BETWEEN_ANY: "60"
-        run: node bot.js
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          MIN_PROFIT_PCT: "1"
+          PROFIT_STEP_PCT: "0.25"
+          COOLDOWN_SEC: "600"
+          BIG_JUMP_BYPASS: "1.0"
+          MIN_SECONDS_BETWEEN_ANY: "60"
+        run: node bot.js
 
-      - name: Commit state.json if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          if git diff --cached --quiet; then
-            echo "No state changes"
-            exit 0
-          fi
-          git commit -m "Update state.json"
-          git push
+      - name: Commit state.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "No state changes"
+            exit 0
+          fi
+          git commit -m "Update state.json"
+          git push
