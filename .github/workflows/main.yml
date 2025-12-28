@@ -1,45 +1,48 @@
 name: Link Arb Bot
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
 
 permissions:
-  contents: write
+  contents: write
+
+concurrency:
+  group: link-arb-bot
+  cancel-in-progress: true
 
 jobs:
-  run:
-    runs-on: ubuntu-latest
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Install deps
-        run: |
-          npm install
+      - name: Install deps
+        run: npm install
 
-      - name: Run bot
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-          MIN_PROFIT_PCT: "1"
-          PROFIT_STEP_PCT: "0.25"
-          COOLDOWN_SEC: "600"
-          BIG_JUMP_BYPASS: "1.0"
-        run: node bot.js
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          MIN_PROFIT_PCT: "1"
+          PROFIT_STEP_PCT: "0.25"
+          COOLDOWN_SEC: "600"
+          BIG_JUMP_BYPASS: "1.0"
+          MIN_SECONDS_BETWEEN_ANY: "60"
+        run: node bot.js
 
-      - name: Commit state.json if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          git diff --cached --quiet || git commit -m "Update state"
-          git push
+      - name: Commit state.json if changed
+        run: bash -lc 'git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"; git add state.json; git diff --cached --quiet && exit 0; git commit -m "Update state.json"; git push'
