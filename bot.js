@@ -1,6 +1,6 @@
 // bot.js (CommonJS)
 // Polygon arb notifier:
-// BUY = Sushi (USDC -> COIN) via router getAmountsOut
+// BUY = Sushi (USDC -> COIN) via router getAmountsOut (BEST path: direct / via WMATIC / via WETH)
 // SELL = Uniswap V3 QuoterV2 + Odos quote (COIN -> USDC)
 // Message shows comparison for $100 / $1000 / $3000 with 🟢🟠🔴 per SELL option (Uniswap vs Odos) on each line.
 // Profit is AFTER slippage haircut + gas estimate (both applied in USDC base units).
@@ -64,6 +64,7 @@ const TOKENS = {
   USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6 },
   LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39", decimals: 18 },
   WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", decimals: 18 },
+  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", decimals: 18 },
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 }
 };
 
@@ -171,12 +172,29 @@ const uniQuoterV2Abi = [
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)"
 ];
 
-async function quoteSushi_USDC_to_TOKEN(provider, tokenAddr, usdcAmount) {
+// BUY on Sushi: pick best path (direct / via WMATIC / via WETH)
+async function quoteSushi_USDC_to_TOKEN_best(provider, tokenAddr, usdcAmount) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
   const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals); // bigint
-  const pathArr = [TOKENS.USDC.addr, tokenAddr];
-  const amounts = await router.getAmountsOut(amountIn, pathArr);
-  return amounts[amounts.length - 1]; // bigint tokenOut
+
+  const candidates = [
+    [TOKENS.USDC.addr, tokenAddr], // direct
+    [TOKENS.USDC.addr, TOKENS.WMATIC.addr, tokenAddr], // via WMATIC
+    [TOKENS.USDC.addr, TOKENS.WETH.addr, tokenAddr] // via WETH
+  ];
+
+  let bestOut = null;
+
+  for (const pathArr of candidates) {
+    try {
+      const amounts = await router.getAmountsOut(amountIn, pathArr);
+      const out = amounts[amounts.length - 1];
+      if (!bestOut || out > bestOut) bestOut = out;
+    } catch (_) {}
+  }
+
+  if (!bestOut) throw new Error("Sushi BUY quote failed (all paths)");
+  return bestOut; // bigint tokenOut
 }
 
 async function quoteUniV3_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
@@ -355,7 +373,7 @@ async function sendDemoSignalForSym(provider, sym) {
 
   for (const size of SIZES) {
     try {
-      const tokenOut = await quoteSushi_USDC_to_TOKEN(provider, t.addr, size);
+      const tokenOut = await quoteSushi_USDC_to_TOKEN_best(provider, t.addr, size);
 
       const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
       const uniOut = uniBest ? uniBest.amountOut : null;
@@ -445,7 +463,7 @@ async function main() {
       state.pairs[sizeKey] = state.pairs[sizeKey] || {};
 
       try {
-        const tokenOut = await quoteSushi_USDC_to_TOKEN(provider, t.addr, size);
+        const tokenOut = await quoteSushi_USDC_to_TOKEN_best(provider, t.addr, size);
 
         const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
         const uniOut = uniBest ? uniBest.amountOut : null;
