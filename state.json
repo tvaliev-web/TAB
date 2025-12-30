@@ -1,4 +1,14 @@
 {
-  "pairs": {},
-  "meta": { "lastAnySentAt": 0 }
+  "pairs": {
+    "polygon:LINK/USDC:UNI->ODOS": {},
+    "polygon:WMATIC/USDC:UNI->ODOS": {
+      "lastSentAt": 1767078041,
+      "lastSentProfit": 10.687015503875966,
+      "lastUniswap": 0.1032,
+      "lastOdos": 0.114229
+    }
+  },
+  "meta": {
+    "lastAnySentAt": 1767078041
+  }
 }
