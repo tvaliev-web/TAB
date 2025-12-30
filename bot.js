@@ -7,16 +7,22 @@
 
 const fs = require("fs");
 const path = require("path");
-const axios = require("axios reminds-k "axios");
+const axios = require("axios"); // FIXED (your pasted file had a broken require line) :contentReference[oaicite:1]{index=1}
 const { ethers } = require("ethers");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TG_TOKEN;
-const CHAT_ID = process.env.CHAT_ID || process.env.TG_CHAT_ID;
+const CHAT_ID = process.env.CHAT_ID || process.env.TG_CHAT_ID; // can be "id1,id2,id3"
 const RPC_URL = process.env.RPC_URL;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID) throw new Error("CHAT_ID missing");
 if (!RPC_URL) throw new Error("RPC_URL missing");
+
+// ✅ ONLY CHANGE: allow multiple recipients (comma-separated CHAT_ID secret)
+const CHAT_IDS = String(CHAT_ID)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
@@ -87,18 +93,22 @@ function fmt(n, d = 4) {
   return n.toFixed(d);
 }
 
+// ✅ ONLY CHANGE: send to ALL chat IDs
 async function tgSendHTML(html) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  await axios.post(
-    url,
-    {
-      chat_id: CHAT_ID,
-      text: html,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    },
-    { timeout: 20000 }
-  );
+
+  for (const chat_id of CHAT_IDS) {
+    await axios.post(
+      url,
+      {
+        chat_id,
+        text: html,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      },
+      { timeout: 20000 }
+    );
+  }
 }
 
 function sushiSwapLink(tokenIn, tokenOut) {
