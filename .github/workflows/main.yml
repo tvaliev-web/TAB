@@ -36,6 +36,10 @@ jobs:
           COOLDOWN_SEC: "600"
           BIG_JUMP_BYPASS: "1.0"
           MIN_SECONDS_BETWEEN_ANY: "60"
+
+          # demo + window
+          SEND_DEMO_ON_MANUAL: "1"
+          QUOTE_TTL_SEC: "60"
         run: node bot.js
 
       - name: Commit state.json if changed
