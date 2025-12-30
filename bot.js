@@ -3,20 +3,20 @@
 // BUY  = Sushi (USDC -> COIN) via router getAmountsOut
 // SELL = Uniswap V3 QuoterV2 and Odos quote (COIN -> USDC)
 //
-// Message format:
+// Message format (PLAIN TEXT, no parse_mode):
 // - Buy link (SushiSwap)
 // - Sell links (Uniswap + Odos) ALWAYS shown
 // - Comparison for $100 / $1000 / $3000
-//   Each size line shows BOTH venues if available: Uni +pct | Odos +pct
-//   Emojis per your rules (after gas + slippage):
-//     🟢 >= 1.50%
-//     🟠 1.30–1.49%
-//     🔴 1.00–1.29%
-//     ❌ < 1.00% or n/a
+//   Each size line shows BOTH venues: Uni +pct +emoji, Odos +pct +emoji
+//
+// Emojis per your rules (after gas + slippage):
+//   🟢 >= 1.50%
+//   🟠 1.30–1.49%
+//   🔴 1.00–1.29%
+//   ❌ < 1.00% or n/a
 //
 // Alerts only when BEST net profit (across sizes + venues) >= MIN_PROFIT_PCT
 // Re-alert only if profit grows by PROFIT_STEP_PCT, with COOLDOWN_SEC.
-// Keeps state.json (samples + lastSentAt/lastSentProfit).
 //
 // CHAT_ID supports multiple IDs: "id1,id2,id3"
 
@@ -46,26 +46,26 @@ if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty");
 // ---------- CONFIG ----------
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
-// Compare sizes in message
+// Compare sizes in message:
 const SIZES = String(process.env.SIZES || "100,1000,3000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// Signal tuning (decision based on BEST net profit)
+// Signal tuning
 const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 1.0);
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 
-// Execution window text helper
+// Execution window hint
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// “After gas + slippage” knobs (your bot-side estimate)
+// “After gas + slippage” knobs
 const SLIPPAGE_PCT = Number(process.env.SLIPPAGE_PCT || 0.30); // 0.30%
 const GAS_USDC_CYCLE = Number(process.env.GAS_USDC_CYCLE || 0.25); // $0.25
 
-// Demo behavior: send demo on manual run
+// Demo behavior
 const SEND_DEMO_ON_MANUAL =
   String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
@@ -108,13 +108,13 @@ const UNI_QUOTER_V2 = (
   "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
 ).toLowerCase();
 
-// Try fee tiers (in order)
+// Try fee tiers
 const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// Odos quote endpoint (v3 then fallback to v2)
+// Odos quote endpoints
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
 
@@ -131,25 +131,15 @@ function readState() {
 function writeState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
-
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
-
 function pct(n, d = 2) {
   if (!Number.isFinite(n)) return "n/a";
   return n.toFixed(d);
 }
 
-// ---------- TELEGRAM (MarkdownV2 to avoid HTML parse errors) ----------
-function mdEscape(s) {
-  // MarkdownV2 specials: _ * [ ] ( ) ~ ` > # + - = | { } . ! \
-  return String(s).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
-}
-function mdLink(text, url) {
-  return `[${mdEscape(text)}](${String(url)})`;
-}
-
+// ---------- TELEGRAM (PLAIN TEXT, NO parse_mode) ----------
 async function tgSendTo(chatId, text) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
   await axios.post(
@@ -157,7 +147,6 @@ async function tgSendTo(chatId, text) {
     {
       chat_id: chatId,
       text,
-      parse_mode: "MarkdownV2",
       disable_web_page_preview: true
     },
     { timeout: 20000 }
@@ -192,13 +181,10 @@ const uniQuoterV2Abi = [
 
 async function quoteSushi_USDC_to_TOKEN(provider, tokenAddr, usdcAmount) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const amountIn = ethers.parseUnits(
-    String(usdcAmount),
-    TOKENS.USDC.decimals
-  ); // bigint
+  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals);
   const pathArr = [TOKENS.USDC.addr, tokenAddr];
   const amounts = await router.getAmountsOut(amountIn, pathArr);
-  return amounts[amounts.length - 1]; // bigint tokenOut
+  return amounts[amounts.length - 1];
 }
 
 async function quoteUniV3_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
@@ -215,11 +201,10 @@ async function quoteUniV3_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn)
         sqrtPriceLimitX96: 0
       };
       const res = await q.quoteExactInputSingle(params);
-      const amountOut = res[0]; // bigint
+      const amountOut = res[0];
       if (!best || amountOut > best.amountOut) best = { amountOut, fee };
     } catch (_) {}
   }
-
   return best; // {amountOut, fee} or null
 }
 
@@ -247,21 +232,19 @@ async function quoteOdos_TOKEN_to_USDC(tokenAddr, tokenAmountIn) {
 
   const out = res?.data?.outAmounts?.[0];
   if (!out) throw new Error("Odos quote missing outAmounts");
-  return BigInt(out); // USDC out (base units)
+  return BigInt(out);
 }
 
 // ---------- PROFIT (AFTER SLIPPAGE + GAS) - BigInt only ----------
-const SLIPPAGE_BPS = Math.max(0, Math.min(5000, Math.round(SLIPPAGE_PCT * 100))); // 0.30% => 30 bps
+const SLIPPAGE_BPS = Math.max(0, Math.min(5000, Math.round(SLIPPAGE_PCT * 100))); // 0.30% => 30
 const ONE_BPS = 10000n;
 
 function applySlippage(usdcOutBase) {
-  // haircut proceeds by SLIPPAGE_BPS
   const factor = ONE_BPS - BigInt(SLIPPAGE_BPS);
   return (usdcOutBase * factor) / ONE_BPS;
 }
 
 function subtractGas(usdcOutBase) {
-  // subtract fixed USDC estimate per full cycle
   const gasBase = ethers.parseUnits(
     Number(GAS_USDC_CYCLE).toFixed(TOKENS.USDC.decimals),
     TOKENS.USDC.decimals
@@ -270,12 +253,8 @@ function subtractGas(usdcOutBase) {
 }
 
 function netProfitPct(usdcInDollars, usdcOutBase) {
-  const usdcInBase = ethers.parseUnits(
-    String(usdcInDollars),
-    TOKENS.USDC.decimals
-  );
-  const diff = usdcOutBase - usdcInBase; // bigint
-  // safe: sizes are small (<= few thousand USDC)
+  const usdcInBase = ethers.parseUnits(String(usdcInDollars), TOKENS.USDC.decimals);
+  const diff = usdcOutBase - usdcInBase;
   return (Number(diff) / Number(usdcInBase)) * 100;
 }
 
@@ -297,7 +276,7 @@ function shouldSend(statePair, profitPctVal) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- EMOJI FOR EACH VENUE (YOUR EXACT RULES) ----------
+// ---------- EMOJI ----------
 function emojiForPct(p) {
   if (!Number.isFinite(p)) return "❌";
   if (p >= 1.5) return "🟢";
@@ -329,46 +308,15 @@ function pushSample(statePair, profitPctVal) {
   statePair.lastAnyAt = nowSec();
 }
 
-// ---------- MESSAGE BUILDER (FINAL FORMAT) ----------
-function buildSignalMessage({
-  sym,
-  buyLinkMd,
-  sellUniMd,
-  sellOdosMd,
-  perSizeLines,
-  windowText
-}) {
-  return [
-    `🔥 *ARBITRAGE SIGNAL — ${mdEscape(sym)} / USDC*`,
-    "",
-    `Buy: ${buyLinkMd}`,
-    `Sell: ${sellUniMd}  |  ${sellOdosMd}`,
-    "",
-    `💰 *Profit \\(after gas \\+ slippage\\)*`,
-    ...perSizeLines,
-    "",
-    `⏱ *Execution window:* ${mdEscape(windowText)}`,
-    "",
-    `🟢 \\>= 1\\.50%`,
-    `🟠 1\\.30–1\\.49%`,
-    `🔴 1\\.00–1\\.29%`,
-    `❌ < 1\\.00% / n\\/a`
-  ].join("\n");
-}
-
-// ---------- CORE: compute per-size net profit for BOTH venues ----------
+// ---------- QUOTE BOTH VENUES FOR ONE SIZE ----------
 async function quoteForSize(provider, token, sizeUsd) {
-  // BUY on Sushi
   const tokenOut = await quoteSushi_USDC_to_TOKEN(provider, token.addr, sizeUsd);
 
-  // SELL on Uniswap
   const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, token.addr, tokenOut);
   const uniOut = uniBest ? uniBest.amountOut : null;
 
-  // SELL on Odos
   const odosOut = await quoteOdos_TOKEN_to_USDC(token.addr, tokenOut);
 
-  // Apply slippage+gas to each venue independently
   let uniPct = NaN;
   let odosPct = NaN;
 
@@ -391,50 +339,69 @@ async function quoteForSize(provider, token, sizeUsd) {
   };
 }
 
+// ---------- MESSAGE BUILDER (PLAIN TEXT) ----------
+function buildSignalMessage({
+  sym,
+  buyUrl,
+  uniUrl,
+  odosUrl,
+  perSizeLines,
+  windowText
+}) {
+  return [
+    `🔥 ARBITRAGE SIGNAL — ${sym} / USDC`,
+    "",
+    `Buy (SushiSwap): ${buyUrl}`,
+    `Sell (Uniswap): ${uniUrl}`,
+    `Sell (Odos):    ${odosUrl}`,
+    "",
+    `💰 Profit (after gas + slippage)`,
+    ...perSizeLines,
+    "",
+    `⏱ Execution window: ${windowText}`,
+    "",
+    `🟢 >= 1.50%`,
+    `🟠 1.30–1.49%`,
+    `🔴 1.00–1.29%`,
+    `❌ < 1.00% / n/a`
+  ].join("\n");
+}
+
 // ---------- DEMO ----------
 async function sendDemoSignalForSym(provider, sym) {
   const t = TOKENS[sym];
 
-  const buyLinkMd = mdLink("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, t.addr));
-  const sellUniMd = mdLink("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
-  const sellOdosMd = mdLink("Odos", odosLink(t.addr, TOKENS.USDC.addr));
+  const buyUrl = sushiSwapLink(TOKENS.USDC.addr, t.addr);
+  const uniUrl = uniswapLink(t.addr, TOKENS.USDC.addr);
+  const odosUrl = odosLink(t.addr, TOKENS.USDC.addr);
 
   const rows = [];
-  let best = -999;
-
   for (const size of SIZES) {
-    let r;
     try {
-      r = await quoteForSize(provider, t, size);
-    } catch (e) {
-      rows.push(`❌ *$${size}* → Uni n\\/a | Odos n\\/a`);
-      continue;
+      const r = await quoteForSize(provider, t, size);
+
+      const eu = emojiForPct(r.uni.pct);
+      const eo = emojiForPct(r.odos.pct);
+
+      const uniTxt = Number.isFinite(r.uni.pct)
+        ? `${r.uni.pct >= 0 ? "+" : ""}${pct(r.uni.pct, 2)}%`
+        : "n/a";
+
+      const odosTxt = Number.isFinite(r.odos.pct)
+        ? `${r.odos.pct >= 0 ? "+" : ""}${pct(r.odos.pct, 2)}%`
+        : "n/a";
+
+      rows.push(`$${size} → Uniswap ${eu} ${uniTxt}   |   Odos ${eo} ${odosTxt}`);
+    } catch (_) {
+      rows.push(`$${size} → Uniswap ❌ n/a   |   Odos ❌ n/a`);
     }
-
-    const eu = emojiForPct(r.uni.pct);
-    const eo = emojiForPct(r.odos.pct);
-
-    const uniTxt = Number.isFinite(r.uni.pct)
-      ? `${r.uni.pct >= 0 ? "+" : ""}${pct(r.uni.pct, 2)}%`
-      : "n/a";
-
-    const odosTxt = Number.isFinite(r.odos.pct)
-      ? `${r.odos.pct >= 0 ? "+" : ""}${pct(r.odos.pct, 2)}%`
-      : "n/a";
-
-    rows.push(
-      `*\\$${size}* → ${eu} Uni ${mdEscape(uniTxt)}  |  ${eo} Odos ${mdEscape(odosTxt)}`
-    );
-
-    if (Number.isFinite(r.uni.pct)) best = Math.max(best, r.uni.pct);
-    if (Number.isFinite(r.odos.pct)) best = Math.max(best, r.odos.pct);
   }
 
   const msg = buildSignalMessage({
     sym,
-    buyLinkMd,
-    sellUniMd,
-    sellOdosMd,
+    buyUrl,
+    uniUrl,
+    odosUrl,
     perSizeLines: rows,
     windowText: "2–5 minutes"
   });
@@ -452,7 +419,6 @@ async function main() {
 
   const eventName = process.env.GITHUB_EVENT_NAME || "";
 
-  // Manual run demo (real quotes)
   if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
     try {
       await sendDemoSignalForSym(provider, "LINK");
@@ -465,14 +431,13 @@ async function main() {
     const t = TOKENS[sym];
     if (!t) continue;
 
-    // Keep your existing keys per size for samples
     const primarySize = 1000;
     const primaryKey = `polygon:${sym}:USDC:${primarySize}`;
     state.pairs[primaryKey] = state.pairs[primaryKey] || {};
 
-    const buyLinkMd = mdLink("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, t.addr));
-    const sellUniMd = mdLink("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
-    const sellOdosMd = mdLink("Odos", odosLink(t.addr, TOKENS.USDC.addr));
+    const buyUrl = sushiSwapLink(TOKENS.USDC.addr, t.addr);
+    const uniUrl = uniswapLink(t.addr, TOKENS.USDC.addr);
+    const odosUrl = odosLink(t.addr, TOKENS.USDC.addr);
 
     const perSizeLines = [];
     let bestAcrossAll = -999;
@@ -481,41 +446,35 @@ async function main() {
       const sizeKey = `polygon:${sym}:USDC:${size}`;
       state.pairs[sizeKey] = state.pairs[sizeKey] || {};
 
-      let r;
       try {
-        r = await quoteForSize(provider, t, size);
+        const r = await quoteForSize(provider, t, size);
+
+        const eu = emojiForPct(r.uni.pct);
+        const eo = emojiForPct(r.odos.pct);
+
+        const uniTxt = Number.isFinite(r.uni.pct)
+          ? `${r.uni.pct >= 0 ? "+" : ""}${pct(r.uni.pct, 2)}%`
+          : "n/a";
+
+        const odosTxt = Number.isFinite(r.odos.pct)
+          ? `${r.odos.pct >= 0 ? "+" : ""}${pct(r.odos.pct, 2)}%`
+          : "n/a";
+
+        perSizeLines.push(`$${size} → Uniswap ${eu} ${uniTxt}   |   Odos ${eo} ${odosTxt}`);
+
+        const bestThisSize = Math.max(
+          Number.isFinite(r.uni.pct) ? r.uni.pct : -999,
+          Number.isFinite(r.odos.pct) ? r.odos.pct : -999
+        );
+
+        if (bestThisSize > -900) pushSample(state.pairs[sizeKey], bestThisSize);
+
+        if (Number.isFinite(r.uni.pct)) bestAcrossAll = Math.max(bestAcrossAll, r.uni.pct);
+        if (Number.isFinite(r.odos.pct)) bestAcrossAll = Math.max(bestAcrossAll, r.odos.pct);
       } catch (e) {
         console.error(sym, "QUOTE ERROR:", e?.response?.status, e?.message || e);
-        perSizeLines.push(`❌ *\\$${size}* → Uni n\\/a | Odos n\\/a`);
-        continue;
+        perSizeLines.push(`$${size} → Uniswap ❌ n/a   |   Odos ❌ n/a`);
       }
-
-      const eu = emojiForPct(r.uni.pct);
-      const eo = emojiForPct(r.odos.pct);
-
-      const uniTxt = Number.isFinite(r.uni.pct)
-        ? `${r.uni.pct >= 0 ? "+" : ""}${pct(r.uni.pct, 2)}%`
-        : "n/a";
-
-      const odosTxt = Number.isFinite(r.odos.pct)
-        ? `${r.odos.pct >= 0 ? "+" : ""}${pct(r.odos.pct, 2)}%`
-        : "n/a";
-
-      perSizeLines.push(
-        `*\\$${size}* → ${eu} Uni ${mdEscape(uniTxt)}  |  ${eo} Odos ${mdEscape(odosTxt)}`
-      );
-
-      // Store samples for window estimation (use best venue pct for this size)
-      const bestThisSize = Math.max(
-        Number.isFinite(r.uni.pct) ? r.uni.pct : -999,
-        Number.isFinite(r.odos.pct) ? r.odos.pct : -999
-      );
-
-      if (bestThisSize > -900) pushSample(state.pairs[sizeKey], bestThisSize);
-
-      // Best across all sizes+venues controls alert
-      if (Number.isFinite(r.uni.pct)) bestAcrossAll = Math.max(bestAcrossAll, r.uni.pct);
-      if (Number.isFinite(r.odos.pct)) bestAcrossAll = Math.max(bestAcrossAll, r.odos.pct);
     }
 
     const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
@@ -528,9 +487,9 @@ async function main() {
 
     const msg = buildSignalMessage({
       sym,
-      buyLinkMd,
-      sellUniMd,
-      sellOdosMd,
+      buyUrl,
+      uniUrl,
+      odosUrl,
       perSizeLines,
       windowText
     });
