@@ -1,10 +1,14 @@
 {
-  "name": "telegram-arb-bot",
+  "name": "link-arb-bot",
   "version": "1.0.0",
-  "main": "bot.js",
+  "private": true,
   "type": "commonjs",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
   "dependencies": {
     "axios": "^1.7.9",
-    "ethers": "^6.13.4"
+    "ethers": "^6.16.0"
   }
 }
