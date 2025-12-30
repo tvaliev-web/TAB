@@ -1,15 +1,18 @@
-// bot.js (CommonJS) — Polygon
-// BUY: Sushi (USDC -> TOKEN) exact TRADE_USDC
-// SELL: best of (Uniswap v3) vs (Odos) for TOKEN -> USDC
-// Alerts to multiple Telegram IDs: CHAT_ID="id1,id2"
-// Anti-spam via state.json: >= MIN_PROFIT_PCT, resend only on growth.
+// bot.js (CommonJS)
+// Polygon arb notifier:
+// BUY = Sushi (USDC -> COIN) using router getAmountsOut
+// SELL = best of (Uniswap V3 QuoterV2, Odos quote) (COIN -> USDC)
+// Sends Telegram alerts when profit >= MIN_PROFIT_PCT
+// Re-sends only if profit increases by PROFIT_STEP_PCT (state.json), with cooldown.
+//
+// CHAT_ID supports multiple IDs: "id1,id2,id3"
 
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const { ethers } = require("ethers");
 
-// ===== ENV =====
+// ---------- ENV ----------
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.tg_token;
 const CHAT_ID_RAW = process.env.CHAT_ID || process.env.TG_CHAT_ID || process.env.tg_chat_id;
 const RPC_URL = process.env.RPC_URL;
@@ -18,160 +21,218 @@ if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID_RAW) throw new Error("CHAT_ID missing");
 if (!RPC_URL) throw new Error("RPC_URL missing");
 
-// Multi recipients: "id1,id2"
-const CHAT_IDS = String(CHAT_ID_RAW).split(",").map(s => s.trim()).filter(Boolean);
+const CHAT_IDS = String(CHAT_ID_RAW)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
+if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty");
+
+// ---------- CONFIG ----------
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
 // Trade sizing
-const TRADE_USDC = Number(process.env.TRADE_USDC || 1000);
-if (!Number.isFinite(TRADE_USDC) || TRADE_USDC <= 0) throw new Error("TRADE_USDC invalid");
+const USDC_IN = Number(process.env.USDC_IN || 1000); // in dollars
+const USDC_DECIMALS = 6;
 
 // Signal tuning
 const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 1.0);
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
-const MIN_SECONDS_BETWEEN_ANY = Number(process.env.MIN_SECONDS_BETWEEN_ANY || 60);
+const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// Manual-only message
+// Demo behavior
 const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "0") === "1";
 
-// ===== Addresses (Polygon) =====
-const USDC = (process.env.USDC || "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase();
+// Tokens (Polygon)
+const TOKENS = {
+  USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6 },
+  LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39", decimals: 18 },
+  WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", decimals: 18 },
+  AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 }
+};
 
-// Sushi router (Polygon)
+// Track these coins (edit if you want)
+const WATCH = ["LINK", "WMATIC", "AAVE"];
+
+// SushiSwap Router (Polygon)
 const SUSHI_ROUTER = (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase();
 
-// Uniswap v3 QuoterV2 (Polygon official deployments)
+// Uniswap V3 QuoterV2 (Polygon)
 const UNI_QUOTER_V2 = (process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase();
 
-// Tokens
-const TOKENS = [
-  { symbol: "LINK",  address: (process.env.LINK  || "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(), decimals: 18 },
-  { symbol: "MATIC", address: (process.env.WMATIC|| "0x0d500B1d8E8ef31E21C99d1Db9A6444d3ADf1270").toLowerCase(), decimals: 18 }, // WMATIC on-chain, show as MATIC
-  { symbol: "AAVE",  address: (process.env.AAVE  || "0xd6df932a45c0f255f85145f286ea0b292b21c90b").toLowerCase(), decimals: 18 },
-];
+// Try these fee tiers (in order) for Uniswap V3
+const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
+  .split(",")
+  .map((x) => Number(x.trim()))
+  .filter((x) => Number.isFinite(x) && x > 0);
 
-// Uniswap fee tiers to try (0.05%, 0.3%, 1%)
-const UNI_FEES = [500, 3000, 10000];
+// Odos quote endpoint (use v3 first; fallback to v2)
+const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
+const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
 
-// ===== State =====
+// ---------- STATE ----------
 const STATE_PATH = path.join(__dirname, "state.json");
 
 function readState() {
-  try { return JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); }
-  catch { return { pairs: {} }; }
+  try {
+    return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+  } catch {
+    return { pairs: {}, meta: {} };
+  }
 }
 function writeState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
-function nowSec() { return Math.floor(Date.now() / 1000); }
-function fmt(n, d = 4) { return Number.isFinite(n) ? n.toFixed(d) : "n/a"; }
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
+}
 
-// ===== Telegram HTML =====
-async function tgSendHTML(html) {
+function fmt(n, d = 4) {
+  if (!Number.isFinite(n)) return "n/a";
+  return n.toFixed(d);
+}
+
+function pct(n, d = 2) {
+  if (!Number.isFinite(n)) return "n/a";
+  return n.toFixed(d);
+}
+
+// ---------- TELEGRAM ----------
+async function tgSendTo(chatId, html) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  for (const id of CHAT_IDS) {
-    await axios.post(url, {
-      chat_id: id,
+  await axios.post(
+    url,
+    {
+      chat_id: chatId,
       text: html,
       parse_mode: "HTML",
-      disable_web_page_preview: true,
-    }, { timeout: 20000 });
+      disable_web_page_preview: true
+    },
+    { timeout: 20000 }
+  );
+}
+
+async function tgBroadcast(html) {
+  // send sequentially (avoids Telegram flood)
+  for (const id of CHAT_IDS) {
+    await tgSendTo(id, html);
   }
 }
 
-// ===== Links =====
-function sushiSwapLink(tokenOut) {
-  return `https://www.sushi.com/swap?chainId=${CHAIN_ID}&token0=${USDC}&token1=${tokenOut}`;
-}
-function uniswapSwapLink(tokenIn) {
-  // Uniswap UI: TOKEN -> USDC on Polygon
-  return `https://app.uniswap.org/swap?chain=polygon&inputCurrency=${tokenIn}&outputCurrency=${USDC}`;
-}
-function odosSwapLink(tokenIn) {
-  return `https://app.odos.xyz/?chain=${CHAIN_ID}&tokenIn=${tokenIn}&tokenOut=${USDC}`;
+// ---------- LINKS (clickable names, not raw URLs) ----------
+function linkA(text, url) {
+  // Telegram HTML link
+  return `<a href="${url}">${text}</a>`;
 }
 
-// ===== Sushi quote =====
+function sushiSwapLink(token0, token1) {
+  // Sushi UI (Polygon) – direct pair
+  return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
+}
+
+function uniswapLink(input, output) {
+  return `https://app.uniswap.org/swap?chain=polygon&inputCurrency=${input}&outputCurrency=${output}`;
+}
+
+function odosLink(input, output) {
+  // Best-effort deep link (works for most cases)
+  return `https://app.odos.xyz/?chain=${CHAIN_ID}&tokenIn=${input}&tokenOut=${output}`;
+}
+
+// ---------- ONCHAIN QUOTES ----------
 const sushiRouterAbi = [
   "function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)"
 ];
 
-async function quoteSushiBuy(provider, token) {
-  const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const usdcIn = BigInt(Math.round(TRADE_USDC * 1e6)); // USDC 6d
-  const path = [USDC, token.address];
-  const amounts = await router.getAmountsOut(usdcIn, path);
-  const tokenOut = BigInt(amounts[1].toString());
-  return { usdcIn, tokenOut };
-}
-
-// ===== Uniswap v3 QuoterV2 quoteExactInputSingle =====
 const uniQuoterV2Abi = [
-  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut)"
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)"
 ];
 
-async function quoteUniswapSell(provider, token, tokenAmountIn) {
+async function quoteSushiExactOutUSDCtoToken(provider, tokenAddr, amountUsdc) {
+  const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
+  const amountIn = ethers.parseUnits(String(amountUsdc), USDC_DECIMALS); // bigint
+  const pathArr = [TOKENS.USDC.addr, tokenAddr];
+  const amounts = await router.getAmountsOut(amountIn, pathArr);
+  const out = amounts[amounts.length - 1];
+  return out; // bigint (token amount out)
+}
+
+async function quoteSushiExactOutTokenToUSDC(provider, tokenAddr, tokenDecimals, tokenAmountIn) {
+  const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
+  const pathArr = [tokenAddr, TOKENS.USDC.addr];
+  const amounts = await router.getAmountsOut(tokenAmountIn, pathArr);
+  const out = amounts[amounts.length - 1];
+  return out; // bigint (USDC out)
+}
+
+async function quoteUniV3TokenToUSDC_best(provider, tokenAddr, tokenAmountIn) {
   const q = new ethers.Contract(UNI_QUOTER_V2, uniQuoterV2Abi, provider);
 
-  let bestOut = 0n;
-  let bestFee = null;
+  // Try fee tiers; keep best USDC out
+  let best = null;
 
   for (const fee of UNI_FEES) {
     try {
       const params = {
-        tokenIn: token.address,
-        tokenOut: USDC,
+        tokenIn: tokenAddr,
+        tokenOut: TOKENS.USDC.addr,
         amountIn: tokenAmountIn,
-        fee,
+        fee: fee,
         sqrtPriceLimitX96: 0
       };
-      const out = await q.quoteExactInputSingle(params);
-      const outBI = BigInt(out.toString());
-      if (outBI > bestOut) {
-        bestOut = outBI;
-        bestFee = fee;
+      const res = await q.quoteExactInputSingle(params);
+      const amountOut = res[0]; // bigint
+      if (!best || amountOut > best.amountOut) {
+        best = { amountOut, fee };
       }
     } catch (_) {
-      // ignore fee tier failures (pool missing etc.)
+      // ignore fee tier failures
     }
   }
 
-  if (bestOut === 0n) throw new Error("Uniswap quote failed (no pool/fees)");
-  return { usdcOut: bestOut, fee: bestFee };
+  return best; // {amountOut, fee} or null
 }
 
-// ===== Odos quote =====
-async function quoteOdosSell(token, tokenAmountIn) {
-  const url = "https://api.odos.xyz/sor/quote/v2";
+async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn, tokenDecimals) {
+  // Odos wants amounts as strings (base units)
+  const amountStr = tokenAmountIn.toString();
+
   const body = {
     chainId: CHAIN_ID,
-    inputTokens: [{ tokenAddress: token.address, amount: tokenAmountIn.toString() }],
-    outputTokens: [{ tokenAddress: USDC, proportion: 1 }],
+    inputTokens: [{ tokenAddress: tokenAddr, amount: amountStr }],
+    outputTokens: [{ tokenAddress: TOKENS.USDC.addr, proportion: 1 }],
     userAddr: "0x0000000000000000000000000000000000000001",
-    slippageLimitPercent: 0.3,
-    referralCode: 0,
+    slippageLimitPercent: 0.30,
     disableRFQs: true,
-    compact: true,
+    compact: true
   };
-  const res = await axios.post(url, body, { timeout: 25000 });
-  const out = res.data?.outAmounts?.[0];
+
+  // Try v3 then v2
+  let res;
+  try {
+    res = await axios.post(ODOS_QUOTE_V3, body, { timeout: 25000 });
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      res = await axios.post(ODOS_QUOTE_V2, body, { timeout: 25000 });
+    } else {
+      throw e;
+    }
+  }
+
+  const out = res?.data?.outAmounts?.[0];
   if (!out) throw new Error("Odos quote missing outAmounts");
-  return BigInt(out); // USDC 6d
+  return BigInt(out); // USDC out (base units)
 }
 
-// ===== Anti-spam decision =====
-function shouldSend(st, profitPct) {
+// ---------- SIGNAL RULES ----------
+function shouldSend(statePair, profitPct) {
   const now = nowSec();
 
-  const lastAnyAt = st?.lastAnyAt || 0;
-  if (now - lastAnyAt < MIN_SECONDS_BETWEEN_ANY) return { ok: false, reason: "min_between_any" };
-
-  const lastSentAt = st?.lastSentAt || 0;
-  const lastSentProfit = st?.lastSentProfit ?? -999;
+  const lastSentAt = statePair?.lastSentAt || 0;
+  const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
   if (profitPct < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
@@ -185,98 +246,121 @@ function shouldSend(st, profitPct) {
   return { ok: true, reason: "growth" };
 }
 
-// ===== Main =====
+// ---------- MAIN ----------
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
 
   const state = readState();
   state.pairs = state.pairs || {};
+  state.meta = state.meta || {};
 
   const eventName = process.env.GITHUB_EVENT_NAME || "";
-  if (eventName === "workflow_dispatch") {
-    await tgSendHTML("✅ <b>BOT STARTED</b>");
-    if (SEND_DEMO_ON_MANUAL) {
-      await tgSendHTML(`🧪 <b>DEMO</b>\nTrade size: <b>$${fmt(TRADE_USDC, 0)}</b>\nMin profit: <b>${fmt(MIN_PROFIT_PCT, 2)}%</b>`);
-    }
+
+  if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
+    const demo = [
+      "✅ <b>BOT STARTED</b>",
+      `Sizing: <b>$${USDC_IN}</b>`,
+      `Threshold: <b>${MIN_PROFIT_PCT}%</b> (step ${PROFIT_STEP_PCT}%)`
+    ].join("\n");
+    await tgBroadcast(demo);
   }
 
-  for (const token of TOKENS) {
-    const key = `polygon:${token.symbol}:trade=${TRADE_USDC}`;
+  for (const sym of WATCH) {
+    const t = TOKENS[sym];
+    if (!t) continue;
+
+    const key = `polygon:${sym}:USDC_IN_${USDC_IN}`;
     state.pairs[key] = state.pairs[key] || {};
-    const st = state.pairs[key];
 
-    let buy, odosOut, uni;
+    let tokenOutSushi, usdcBackUni, usdcBackOdos;
+    let uniBest = null;
+
     try {
-      // BUY on Sushi
-      buy = await quoteSushiBuy(provider, token);
+      // BUY: Sushi USDC -> TOKEN (for $USDC_IN)
+      tokenOutSushi = await quoteSushiExactOutUSDCtoToken(provider, t.addr, USDC_IN);
 
-      // SELL candidates
-      // Odos
-      odosOut = await quoteOdosSell(token, buy.tokenOut);
+      // SELL candidates: TOKEN -> USDC
+      uniBest = await quoteUniV3TokenToUSDC_best(provider, t.addr, tokenOutSushi);
+      if (uniBest) usdcBackUni = uniBest.amountOut;
 
-      // Uniswap
-      uni = await quoteUniswapSell(provider, token, buy.tokenOut);
-
+      usdcBackOdos = await quoteOdosTokenToUSDC(t.addr, tokenOutSushi, t.decimals);
     } catch (e) {
-      console.error(`[${token.symbol}] QUOTE ERROR:`, e?.message || e);
-      // do not telegram spam errors
-      st.lastAnyAt = nowSec();
-      writeState(state);
+      // no Telegram spam on errors
+      console.error(sym, "QUOTE ERROR:", e?.response?.status, e?.message || e);
       continue;
     }
 
-    // choose best SELL
-    const uniOut = uni.usdcOut;
-    const best = (uniOut > odosOut)
-      ? { venue: "Uniswap", usdcOut: uniOut, link: uniswapSwapLink(token.address), extra: `fee=${uni.fee}` }
-      : { venue: "Odos", usdcOut: odosOut, link: odosSwapLink(token.address), extra: "" };
+    // choose best sell
+    let bestVenue = null;
+    let bestUsdcOut = null;
 
-    const usdcIn = buy.usdcIn;
-    const profitUSDC = Number(best.usdcOut - usdcIn) / 1e6;
-    const profitPct = (profitUSDC / TRADE_USDC) * 100;
+    if (usdcBackUni && (!bestUsdcOut || usdcBackUni > bestUsdcOut)) {
+      bestUsdcOut = usdcBackUni;
+      bestVenue = uniBest ? `UniswapV3 (fee ${uniBest.fee})` : "UniswapV3";
+    }
+    if (usdcBackOdos && (!bestUsdcOut || usdcBackOdos > bestUsdcOut)) {
+      bestUsdcOut = usdcBackOdos;
+      bestVenue = "Odos";
+    }
 
-    const decision = shouldSend(st, profitPct);
-    st.lastAnyAt = nowSec();
-    writeState(state);
+    if (!bestUsdcOut || !bestVenue) continue;
 
+    const usdcInBase = ethers.parseUnits(String(USDC_IN), USDC_DECIMALS);
+    const profitPct = (Number(bestUsdcOut - usdcInBase) / Number(usdcInBase)) * 100;
+
+    const decision = shouldSend(state.pairs[key], profitPct);
     if (!decision.ok) {
-      console.log(`[${token.symbol}] no send: ${decision.reason} profit=${profitPct}`);
+      console.log(`${sym}: no send (${decision.reason}) profit=${profitPct}`);
       continue;
     }
 
-    const tokenOutHuman = Number(buy.tokenOut.toString()) / Math.pow(10, token.decimals);
-    const usdcOutHuman = Number(best.usdcOut.toString()) / 1e6;
+    // Compute readable numbers
+    const tokenBought = Number(ethers.formatUnits(tokenOutSushi, t.decimals));
+    const usdcOut = Number(ethers.formatUnits(bestUsdcOut, USDC_DECIMALS));
 
-    const msg =
-`🔥 <b>ARBITRAGE SIGNAL</b> (${token.symbol}/USDC) <b>[Polygon]</b>
+    // "Execution window" heuristic (you can tune QUOTE_TTL_SEC)
+    const windowText = `~${QUOTE_TTL_SEC}s`;
 
-Trade size: <b>$${fmt(TRADE_USDC, 0)}</b>
+    const buyLink = linkA("Sushi (buy USDC→" + sym + ")", sushiSwapLink(TOKENS.USDC.addr, t.addr));
+    const uniSellLink = linkA("Uniswap (sell " + sym + "→USDC)", uniswapLink(t.addr, TOKENS.USDC.addr));
+    const odosSellLink = linkA("Odos (sell " + sym + "→USDC)", odosLink(t.addr, TOKENS.USDC.addr));
 
-Buy: <b><a href="${sushiSwapLink(token.address)}">Sushi</a></b> (USDC → ${token.symbol})
-Sell: <b><a href="${best.link}">${best.venue}</a></b> (${token.symbol} → USDC) ${best.extra ? `<i>${best.extra}</i>` : ""}
+    const sellLink = bestVenue.startsWith("Odos") ? odosSellLink : uniSellLink;
 
-Buy output: <b>${fmt(tokenOutHuman, 6)} ${token.symbol}</b>
-Sell output: <b>${fmt(usdcOutHuman, 2)} USDC</b>
-
-Profit: <b>+${fmt(profitUSDC, 2)} USDC</b> (<b>+${fmt(profitPct, 2)}%</b>)`;
+    const msg = [
+      "🔥 <b>ARBITRAGE SIGNAL</b>  <b>" + sym + "/USDC</b>",
+      "",
+      `Size: <b>$${USDC_IN}</b>`,
+      `Buy (Sushi): <b>$${USDC_IN}</b> → <b>${fmt(tokenBought, 6)} ${sym}</b>`,
+      `Best sell: <b>${bestVenue}</b> → <b>$${fmt(usdcOut, 2)}</b>`,
+      "",
+      `Profit: <b>+${pct(profitPct, 2)}%</b>`,
+      `Execution window: <b>${windowText}</b>`,
+      "",
+      `${buyLink}`,
+      `${sellLink}`,
+      "",
+      `<i>Reason: ${decision.reason}</i>`
+    ].join("\n");
 
     try {
-      await tgSendHTML(msg);
+      await tgBroadcast(msg);
 
-      st.lastSentAt = nowSec();
-      st.lastSentProfit = profitPct;
-      st.lastSentProfitUSDC = profitUSDC;
-      st.lastVenue = best.venue;
+      // update state only on successful send
+      const ts = nowSec();
+      state.pairs[key].lastSentAt = ts;
+      state.pairs[key].lastSentProfit = profitPct;
+      state.pairs[key].lastVenue = bestVenue;
 
       writeState(state);
-
-      console.log(`[${token.symbol}] SENT (${decision.reason}) profit=${profitPct}`);
+      console.log(`${sym}: sent (${decision.reason}) profit=${profitPct}`);
     } catch (e) {
       console.error("TELEGRAM ERROR:", e?.response?.data || e?.message || e);
     }
   }
 }
 
+// never fail Actions (no red X spam)
 main().catch((e) => {
   console.error("FATAL:", e?.message || e);
   process.exit(0);
