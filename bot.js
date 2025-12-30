@@ -348,15 +348,20 @@ function buildSignalMessage({
     `🟢 ≥ 1.50%`,
     `🟠 1.30–1.49%`,
     `🔴 1.00–1.29%`,
-    `❌ under 1.00% / n/a`
+    `❌ below 1.00% / n/a`
   ].join("\n");
 }
 
 // ---------- COMPUTE NET PROFIT FOR ONE VENUE ----------
-function computeNetPctForVenue(usdcIn, usdcOutBase) {
+function computeNetPctForVenue(usdcIn, usdcOutBase, opts) {
   if (!usdcOutBase) return { pct: NaN };
-  let net = applySlippageBase(usdcOutBase);
-  net = subtractGasBase(net);
+
+  const applySlip = opts?.applySlippage !== false; // default true
+  const applyGas = opts?.applyGas !== false;       // default true
+
+  let net = applySlip ? applySlippageBase(usdcOutBase) : usdcOutBase;
+  net = applyGas ? subtractGasBase(net) : net;
+
   const p = netProfitPct(usdcIn, net);
   return { pct: p };
 }
@@ -381,7 +386,9 @@ async function sendDemoSignalForSym(provider, sym) {
       const odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
 
       const uni = uniOut ? computeNetPctForVenue(size, uniOut) : { pct: NaN };
-      const od = odosOut ? computeNetPctForVenue(size, odosOut) : { pct: NaN };
+
+      // FIX: do NOT apply your SLIPPAGE_PCT again on Odos (Odos quote already uses slippageLimitPercent)
+      const od = odosOut ? computeNetPctForVenue(size, odosOut, { applySlippage: false }) : { pct: NaN };
 
       const uniText = Number.isFinite(uni.pct)
         ? `${emojiForPct(uni.pct)} Uniswap <b>${uni.pct >= 0 ? "+" : ""}${pct(uni.pct, 2)}%</b>`
@@ -471,7 +478,9 @@ async function main() {
         const odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
 
         const uni = uniOut ? computeNetPctForVenue(size, uniOut) : { pct: NaN };
-        const od = odosOut ? computeNetPctForVenue(size, odosOut) : { pct: NaN };
+
+        // FIX: do NOT apply your SLIPPAGE_PCT again on Odos
+        const od = odosOut ? computeNetPctForVenue(size, odosOut, { applySlippage: false }) : { pct: NaN };
 
         // track best across venues + sizes
         if (Number.isFinite(uni.pct) && uni.pct > bestAcrossAll) bestAcrossAll = uni.pct;
