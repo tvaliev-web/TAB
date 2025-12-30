@@ -2,9 +2,8 @@
 // Polygon arbitrage alerts:
 // BUY always on Sushi (USDC -> TOKEN)
 // SELL chooses best of Uniswap or Odos (TOKEN -> USDC)
-// Profit computed for a concrete trade size (default $1000 USDC)
-// Multi-recipient Telegram via CHAT_ID="id1,id2"
-// Anti-spam via state.json.
+// Profit is computed for a concrete trade size (default $1000 USDC)
+// Anti-spam via state.json: send >= MIN_PROFIT_PCT, re-send only on profit growth steps.
 
 const fs = require("fs");
 const path = require("path");
@@ -12,14 +11,15 @@ const axios = require("axios");
 const { ethers } = require("ethers");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TG_TOKEN;
-const CHAT_ID_RAW = process.env.CHAT_ID || process.env.TG_CHAT_ID;
+const CHAT_ID = process.env.CHAT_ID || process.env.TG_CHAT_ID; // can be "id1,id2,id3"
 const RPC_URL = process.env.RPC_URL;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
-if (!CHAT_ID_RAW) throw new Error("CHAT_ID missing");
+if (!CHAT_ID) throw new Error("CHAT_ID missing");
 if (!RPC_URL) throw new Error("RPC_URL missing");
 
-const CHAT_IDS = String(CHAT_ID_RAW)
+// ✅ parse multiple recipients once (NO duplicates)
+const CHAT_IDS = String(CHAT_ID)
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -27,7 +27,7 @@ const CHAT_IDS = String(CHAT_ID_RAW)
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
 // --- trade sizing ---
-const TRADE_USDC = Number(process.env.TRADE_USDC || 1000);
+const TRADE_USDC = Number(process.env.TRADE_USDC || 1000); // PROFIT for EXACTLY this size
 if (!Number.isFinite(TRADE_USDC) || TRADE_USDC <= 0) throw new Error("TRADE_USDC invalid");
 
 // --- signal tuning ---
@@ -37,17 +37,18 @@ const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 10 * 60);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 const MIN_SECONDS_BETWEEN_ANY = Number(process.env.MIN_SECONDS_BETWEEN_ANY || 60);
 
-// --- addresses (Polygon) ---
+// --- contracts / addresses (Polygon) ---
 const USDC = (process.env.USDC || "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase();
 
 // Sushi Router (Polygon)
 const SUSHI_ROUTER = (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase();
 
-// Uniswap V3
+// Uniswap V3 Factory (same across chains)
 const UNI_V3_FACTORY = (process.env.UNI_V3_FACTORY || "0x1F98431c8aD98523631AE4a59f267346ea31F984").toLowerCase();
-// If this address is wrong for Polygon in your setup, override via secret/env UNI_V3_QUOTER.
+// Quoter (Polygon) — use env to override if needed
 const UNI_V3_QUOTER = (process.env.UNI_V3_QUOTER || "0x5e55c9e631fdc92c1f3b31cce0fd3a2c11d8f9da").toLowerCase();
 
+// Tokens (Polygon)
 const TOKENS = [
   {
     symbol: "LINK",
@@ -55,7 +56,7 @@ const TOKENS = [
     decimals: 18,
   },
   {
-    symbol: "MATIC", // actually WMATIC contract
+    symbol: "MATIC", // we trade WMATIC contract, but show MATIC
     address: (process.env.WMATIC || "0x0d500B1d8E8ef31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
     decimals: 18,
   },
@@ -66,6 +67,7 @@ const TOKENS = [
   },
 ];
 
+// Uniswap fee tiers to try
 const UNI_FEES = [500, 3000, 10000];
 
 // --- state ---
@@ -81,16 +83,27 @@ function writeState(state) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
+// --- helpers ---
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
-
 function fmt(n, d = 4) {
   if (!Number.isFinite(n)) return "n/a";
   return n.toFixed(d);
 }
 
-// --- Telegram (HTML + multi chat ids) ---
+// ✅ Telegram send helpers (TEXT + HTML) to ALL ids
+async function tgSendText(text) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  for (const id of CHAT_IDS) {
+    await axios.post(
+      url,
+      { chat_id: id, text, disable_web_page_preview: true },
+      { timeout: 15000 }
+    );
+  }
+}
+
 async function tgSendHTML(html) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
   for (const id of CHAT_IDS) {
@@ -102,12 +115,11 @@ async function tgSendHTML(html) {
         parse_mode: "HTML",
         disable_web_page_preview: true,
       },
-      { timeout: 20000 }
+      { timeout: 15000 }
     );
   }
 }
 
-// --- links (pre-filled, correct direction) ---
 function sushiSwapLink(tokenIn, tokenOut) {
   return `https://www.sushi.com/swap?chainId=${CHAIN_ID}&token0=${tokenIn}&token1=${tokenOut}`;
 }
@@ -136,14 +148,16 @@ async function quoteSushiBuyUSDCToToken(provider, token) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
 
   const amountIn = BigInt(Math.round(TRADE_USDC * 1e6)); // USDC 6 decimals
-  const route = [USDC, token.address];
+  const swapPath = [USDC, token.address];
 
-  const amounts = await router.getAmountsOut(amountIn, route);
-  return { usdcIn: amountIn, tokenOut: BigInt(amounts[1].toString()) };
+  const amounts = await router.getAmountsOut(amountIn, swapPath);
+  const tokenOut = amounts[1]; // BigInt
+  return { usdcIn: amountIn, tokenOut };
 }
 
 async function quoteOdosSellTokenToUSDC(token, tokenAmountIn) {
   const url = "https://api.odos.xyz/sor/quote/v2";
+
   const body = {
     chainId: CHAIN_ID,
     inputTokens: [{ tokenAddress: token.address, amount: tokenAmountIn.toString() }],
@@ -166,21 +180,26 @@ async function quoteUniswapSellTokenToUSDC(provider, token, tokenAmountIn) {
   const quoter = new ethers.Contract(UNI_V3_QUOTER, uniQuoterAbi, provider);
 
   for (const fee of UNI_FEES) {
-    const pool = await factory.getPool(token.address, USDC, fee);
+    let pool;
+    try {
+      pool = await factory.getPool(token.address, USDC, fee);
+    } catch {
+      pool = "0x0000000000000000000000000000000000000000";
+    }
     if (!pool || pool === "0x0000000000000000000000000000000000000000") continue;
 
     try {
       const out = await quoter.quoteExactInputSingle(token.address, USDC, fee, tokenAmountIn, 0);
-      const usdcOut = BigInt(out.toString());
-      if (usdcOut > 0n) return { usdcOut, fee };
+      if (out && BigInt(out.toString()) > 0n) return { usdcOut: BigInt(out.toString()), fee };
     } catch {
-      // try next tier
+      // try next fee tier
     }
   }
+
   throw new Error("No Uniswap V3 pool/quote available for this pair");
 }
 
-// --- window estimate (heuristic, "how much time left") ---
+// --- window estimate (heuristic) ---
 function estimateWindowSeconds(samples, minProfitPct) {
   if (!samples || samples.length < 3) return null;
 
@@ -192,26 +211,23 @@ function estimateWindowSeconds(samples, minProfitPct) {
   if (dt <= 0) return null;
 
   const slope = (p2 - p0) / dt; // % per sec
-  const last = last3[2];
-
-  // If profit not decaying -> typical window
   if (slope >= 0) return 240; // ~4 min
 
-  const remaining = (last.p - minProfitPct) / (-slope);
+  const remaining = (last3[2].p - minProfitPct) / (-slope);
   if (!Number.isFinite(remaining)) return null;
 
   return Math.max(30, Math.min(600, remaining));
 }
 
 // --- anti-spam decision ---
-function shouldSend(st, profitPct) {
+function shouldSend(statePair, profitPct) {
   const now = nowSec();
 
-  const lastAnyAt = st?.lastAnyAt || 0;
+  const lastAnyAt = statePair?.lastAnyAt || 0;
   if (now - lastAnyAt < MIN_SECONDS_BETWEEN_ANY) return { ok: false, reason: "min_between_any" };
 
-  const lastSentAt = st?.lastSentAt || 0;
-  const lastSentProfit = st?.lastSentProfit ?? -999;
+  const lastSentAt = statePair?.lastSentAt || 0;
+  const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
   if (profitPct < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
@@ -219,6 +235,7 @@ function shouldSend(st, profitPct) {
   const growth = profitPct - lastSentProfit;
 
   if (growth >= BIG_JUMP_BYPASS) return { ok: true, reason: "big_jump" };
+
   if (since < COOLDOWN_SEC) return { ok: false, reason: "cooldown" };
   if (growth < PROFIT_STEP_PCT) return { ok: false, reason: "no_growth" };
 
@@ -227,13 +244,13 @@ function shouldSend(st, profitPct) {
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-
   const state = readState();
   state.pairs = state.pairs || {};
   state.meta = state.meta || {};
 
-  // BOT STARTED: only on manual run, max once per hour
   const eventName = process.env.GITHUB_EVENT_NAME || "";
+
+  // Manual-run "started" message: once per hour max
   if (eventName === "workflow_dispatch") {
     const last = state.meta.lastStartedAt || 0;
     if (nowSec() - last > 3600) {
@@ -248,21 +265,29 @@ async function main() {
     state.pairs[key] = state.pairs[key] || {};
     const st = state.pairs[key];
 
-    let sushiBuy, odosOut, uniOut, best;
+    let sushiBuy, odosSellUSDC, uniSell, best;
 
     try {
+      // 1) BUY on Sushi (USDC -> TOKEN) for exact $TRADE_USDC
       sushiBuy = await quoteSushiBuyUSDCToToken(provider, token);
 
-      odosOut = await quoteOdosSellTokenToUSDC(token, sushiBuy.tokenOut);
+      // 2) SELL on Odos (TOKEN -> USDC)
+      odosSellUSDC = await quoteOdosSellTokenToUSDC(token, sushiBuy.tokenOut);
 
+      // 3) SELL on Uniswap (TOKEN -> USDC)
+      let uniOk = false;
       try {
-        uniOut = await quoteUniswapSellTokenToUSDC(provider, token, sushiBuy.tokenOut);
+        uniSell = await quoteUniswapSellTokenToUSDC(provider, token, sushiBuy.tokenOut);
+        uniOk = true;
       } catch {
-        uniOut = null;
+        uniSell = null;
       }
 
-      if (uniOut && uniOut.usdcOut > odosOut) {
-        best = { venue: "UNISWAP", usdcOut: uniOut.usdcOut, fee: uniOut.fee };
+      const uniOut = uniOk ? uniSell.usdcOut : 0n;
+      const odosOut = odosSellUSDC;
+
+      if (uniOk && uniOut > odosOut) {
+        best = { venue: "UNISWAP", usdcOut: uniOut, fee: uniSell.fee };
       } else {
         best = { venue: "ODOS", usdcOut: odosOut, fee: null };
       }
@@ -271,17 +296,15 @@ async function main() {
       continue;
     }
 
-    const usdcIn = sushiBuy.usdcIn;
+    const usdcIn = sushiBuy.usdcIn; // BigInt, 6 decimals
     const profitUSDC = Number(best.usdcOut - usdcIn) / 1e6;
     const profitPct = (profitUSDC / TRADE_USDC) * 100;
 
-    // samples for window estimate
     st.samples = st.samples || [];
     st.samples.push({ t: nowSec(), p: profitPct });
     if (st.samples.length > 30) st.samples = st.samples.slice(-30);
 
     const decision = shouldSend(st, profitPct);
-
     st.lastAnyAt = nowSec();
     writeState(state);
 
@@ -292,16 +315,16 @@ async function main() {
 
     const windowSec = estimateWindowSeconds(st.samples, MIN_PROFIT_PCT);
     const windowText =
-      windowSec == null ? "~2–6 min" : `${Math.floor(windowSec / 60)}m ${Math.round(windowSec % 60)}s`;
+      windowSec == null ? "~2–6 min" : `${Math.round(windowSec / 60)} min ${Math.round(windowSec % 60)} sec`;
 
     const tokenOutHuman = Number(sushiBuy.tokenOut.toString()) / Math.pow(10, token.decimals);
     const usdcOutHuman = Number(best.usdcOut.toString()) / 1e6;
 
-    const sushiBuyUrl = sushiSwapLink(USDC, token.address);      // USDC -> TOKEN
-    const uniSellUrl = uniswapSwapLink(token.address, USDC);     // TOKEN -> USDC
-    const odosSellUrl = odosSwapLink(token.address, USDC);       // TOKEN -> USDC
+    const sushiBuyUrl = sushiSwapLink(USDC, token.address);
+    const uniSellUrl = uniswapSwapLink(token.address, USDC);
+    const odosSellUrl = odosSwapLink(token.address, USDC);
 
-    const sellLine =
+    const venueLine =
       best.venue === "UNISWAP"
         ? `Sell: <b>Uniswap</b> (fee ${best.fee})`
         : `Sell: <b>Odos</b>`;
@@ -311,7 +334,7 @@ async function main() {
 
 Trade size: <b>$${fmt(TRADE_USDC, 0)}</b>
 Buy: <b>Sushi</b> (USDC → ${token.symbol})
-${sellLine} (${token.symbol} → USDC)
+${venueLine} (${token.symbol} → USDC)
 
 Buy output: <b>${fmt(tokenOutHuman, 6)} ${token.symbol}</b>
 Sell output: <b>${fmt(usdcOutHuman, 2)} USDC</b>
@@ -327,6 +350,9 @@ Swap window (est): <b>${windowText}</b>
       st.lastSentAt = nowSec();
       st.lastSentProfit = profitPct;
       st.lastSentVenue = best.venue;
+      st.lastSentTradeUSDC = TRADE_USDC;
+      st.lastSentTokenOut = sushiBuy.tokenOut.toString();
+      st.lastSentUSDCOut = best.usdcOut.toString();
 
       writeState(state);
       console.log(`[${token.symbol}/USDC] Sent. Reason: ${decision.reason}. Venue=${best.venue}`);
