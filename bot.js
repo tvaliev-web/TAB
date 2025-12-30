@@ -116,7 +116,6 @@ async function tgSendTo(chatId, html) {
 }
 
 async function tgBroadcast(html) {
-  // send sequentially (avoids Telegram flood)
   for (const id of CHAT_IDS) {
     await tgSendTo(id, html);
   }
@@ -124,12 +123,10 @@ async function tgBroadcast(html) {
 
 // ---------- LINKS (clickable names, not raw URLs) ----------
 function linkA(text, url) {
-  // Telegram HTML link
   return `<a href="${url}">${text}</a>`;
 }
 
 function sushiSwapLink(token0, token1) {
-  // Sushi UI (Polygon) – direct pair
   return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
 }
 
@@ -138,7 +135,6 @@ function uniswapLink(input, output) {
 }
 
 function odosLink(input, output) {
-  // Best-effort deep link (works for most cases)
   return `https://app.odos.xyz/?chain=${CHAIN_ID}&tokenIn=${input}&tokenOut=${output}`;
 }
 
@@ -153,25 +149,15 @@ const uniQuoterV2Abi = [
 
 async function quoteSushiExactOutUSDCtoToken(provider, tokenAddr, amountUsdc) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const amountIn = ethers.parseUnits(String(amountUsdc), USDC_DECIMALS); // bigint
+  const amountIn = ethers.parseUnits(String(amountUsdc), USDC_DECIMALS);
   const pathArr = [TOKENS.USDC.addr, tokenAddr];
   const amounts = await router.getAmountsOut(amountIn, pathArr);
-  const out = amounts[amounts.length - 1];
-  return out; // bigint (token amount out)
-}
-
-async function quoteSushiExactOutTokenToUSDC(provider, tokenAddr, tokenDecimals, tokenAmountIn) {
-  const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const pathArr = [tokenAddr, TOKENS.USDC.addr];
-  const amounts = await router.getAmountsOut(tokenAmountIn, pathArr);
-  const out = amounts[amounts.length - 1];
-  return out; // bigint (USDC out)
+  return amounts[amounts.length - 1];
 }
 
 async function quoteUniV3TokenToUSDC_best(provider, tokenAddr, tokenAmountIn) {
   const q = new ethers.Contract(UNI_QUOTER_V2, uniQuoterV2Abi, provider);
 
-  // Try fee tiers; keep best USDC out
   let best = null;
 
   for (const fee of UNI_FEES) {
@@ -184,20 +170,15 @@ async function quoteUniV3TokenToUSDC_best(provider, tokenAddr, tokenAmountIn) {
         sqrtPriceLimitX96: 0
       };
       const res = await q.quoteExactInputSingle(params);
-      const amountOut = res[0]; // bigint
-      if (!best || amountOut > best.amountOut) {
-        best = { amountOut, fee };
-      }
-    } catch (_) {
-      // ignore fee tier failures
-    }
+      const amountOut = res[0];
+      if (!best || amountOut > best.amountOut) best = { amountOut, fee };
+    } catch (_) {}
   }
 
-  return best; // {amountOut, fee} or null
+  return best;
 }
 
-async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn, tokenDecimals) {
-  // Odos wants amounts as strings (base units)
+async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn) {
   const amountStr = tokenAmountIn.toString();
 
   const body = {
@@ -210,7 +191,6 @@ async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn, tokenDecimals) {
     compact: true
   };
 
-  // Try v3 then v2
   let res;
   try {
     res = await axios.post(ODOS_QUOTE_V3, body, { timeout: 25000 });
@@ -224,7 +204,7 @@ async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn, tokenDecimals) {
 
   const out = res?.data?.outAmounts?.[0];
   if (!out) throw new Error("Odos quote missing outAmounts");
-  return BigInt(out); // USDC out (base units)
+  return BigInt(out);
 }
 
 // ---------- SIGNAL RULES ----------
@@ -246,6 +226,63 @@ function shouldSend(statePair, profitPct) {
   return { ok: true, reason: "growth" };
 }
 
+// ---------- MESSAGE BUILDER ----------
+function buildSignalMessage({
+  sym,
+  usdcIn,
+  tokenBought,
+  bestVenue,
+  usdcOut,
+  profitPctVal,
+  reason,
+  buyLink,
+  sellLink
+}) {
+  const windowText = `~${QUOTE_TTL_SEC}s`;
+
+  return [
+    "🔥 <b>ARBITRAGE SIGNAL</b>  <b>" + sym + "/USDC</b>",
+    "",
+    `Size: <b>$${usdcIn}</b>`,
+    `Buy (Sushi): <b>$${usdcIn}</b> → <b>${fmt(tokenBought, 6)} ${sym}</b>`,
+    `Best sell: <b>${bestVenue}</b> → <b>$${fmt(usdcOut, 2)}</b>`,
+    "",
+    `Profit: <b>+${pct(profitPctVal, 2)}%</b>`,
+    `Execution window: <b>${windowText}</b>`,
+    "",
+    `${buyLink}`,
+    `${sellLink}`,
+    "",
+    `<i>Reason: ${reason}</i>`
+  ].join("\n");
+}
+
+// ---------- DEMO SIGNAL (ALWAYS SENDS ON MANUAL RUN) ----------
+async function sendDemoSignal() {
+  // Use WMATIC demo so you see exact format + links
+  const sym = "WMATIC";
+  const t = TOKENS[sym];
+
+  const buyLink = linkA(`Sushi (buy USDC→${sym})`, sushiSwapLink(TOKENS.USDC.addr, t.addr));
+  const uniSellLink = linkA(`Uniswap (sell ${sym}→USDC)`, uniswapLink(t.addr, TOKENS.USDC.addr));
+  const odosSellLink = linkA(`Odos (sell ${sym}→USDC)`, odosLink(t.addr, TOKENS.USDC.addr));
+
+  // Fake numbers just for preview (does not depend on profit threshold)
+  const msg = buildSignalMessage({
+    sym,
+    usdcIn: USDC_IN,
+    tokenBought: 100.0,
+    bestVenue: "Odos (DEMO)",
+    usdcOut: USDC_IN * 1.03,
+    profitPctVal: 3.0,
+    reason: "demo_preview",
+    buyLink,
+    sellLink: `${uniSellLink} | ${odosSellLink}`
+  });
+
+  await tgBroadcast(msg);
+}
+
 // ---------- MAIN ----------
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -256,20 +293,27 @@ async function main() {
 
   const eventName = process.env.GITHUB_EVENT_NAME || "";
 
+  // Manual run: send BOT STARTED + DEMO SIGNAL EXAMPLE
   if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
     const demo = [
       "✅ <b>BOT STARTED</b>",
       `Sizing: <b>$${USDC_IN}</b>`,
-      `Threshold: <b>${MIN_PROFIT_PCT}%</b> (step ${PROFIT_STEP_PCT}%)`
+      `Threshold: <b>${MIN_PROFIT_PCT}%</b> (step ${PROFIT_STEP_PCT}%)`,
+      `Recipients: <b>${CHAT_IDS.join(",")}</b>`
     ].join("\n");
     await tgBroadcast(demo);
+
+    // THIS is the "пример сигнала" you asked for
+    await sendDemoSignal();
   }
 
   for (const sym of WATCH) {
     const t = TOKENS[sym];
     if (!t) continue;
 
-    const key = `polygon:${sym}:USDC_IN_${USDC_IN}`;
+    // IMPORTANT: keep compatible state keys (no reset)
+    // You already have entries like: "polygon:LINK:USDC:1000"
+    const key = `polygon:${sym}:USDC:${USDC_IN}`;
     state.pairs[key] = state.pairs[key] || {};
 
     let tokenOutSushi, usdcBackUni, usdcBackOdos;
@@ -283,9 +327,8 @@ async function main() {
       uniBest = await quoteUniV3TokenToUSDC_best(provider, t.addr, tokenOutSushi);
       if (uniBest) usdcBackUni = uniBest.amountOut;
 
-      usdcBackOdos = await quoteOdosTokenToUSDC(t.addr, tokenOutSushi, t.decimals);
+      usdcBackOdos = await quoteOdosTokenToUSDC(t.addr, tokenOutSushi);
     } catch (e) {
-      // no Telegram spam on errors
       console.error(sym, "QUOTE ERROR:", e?.response?.status, e?.message || e);
       continue;
     }
@@ -306,42 +349,33 @@ async function main() {
     if (!bestUsdcOut || !bestVenue) continue;
 
     const usdcInBase = ethers.parseUnits(String(USDC_IN), USDC_DECIMALS);
-    const profitPct = (Number(bestUsdcOut - usdcInBase) / Number(usdcInBase)) * 100;
+    const profitPctVal = (Number(bestUsdcOut - usdcInBase) / Number(usdcInBase)) * 100;
 
-    const decision = shouldSend(state.pairs[key], profitPct);
+    const decision = shouldSend(state.pairs[key], profitPctVal);
     if (!decision.ok) {
-      console.log(`${sym}: no send (${decision.reason}) profit=${profitPct}`);
+      console.log(`${sym}: no send (${decision.reason}) profit=${profitPctVal}`);
       continue;
     }
 
-    // Compute readable numbers
     const tokenBought = Number(ethers.formatUnits(tokenOutSushi, t.decimals));
     const usdcOut = Number(ethers.formatUnits(bestUsdcOut, USDC_DECIMALS));
 
-    // "Execution window" heuristic (you can tune QUOTE_TTL_SEC)
-    const windowText = `~${QUOTE_TTL_SEC}s`;
-
-    const buyLink = linkA("Sushi (buy USDC→" + sym + ")", sushiSwapLink(TOKENS.USDC.addr, t.addr));
-    const uniSellLink = linkA("Uniswap (sell " + sym + "→USDC)", uniswapLink(t.addr, TOKENS.USDC.addr));
-    const odosSellLink = linkA("Odos (sell " + sym + "→USDC)", odosLink(t.addr, TOKENS.USDC.addr));
-
+    const buyLink = linkA(`Sushi (buy USDC→${sym})`, sushiSwapLink(TOKENS.USDC.addr, t.addr));
+    const uniSellLink = linkA(`Uniswap (sell ${sym}→USDC)`, uniswapLink(t.addr, TOKENS.USDC.addr));
+    const odosSellLink = linkA(`Odos (sell ${sym}→USDC)`, odosLink(t.addr, TOKENS.USDC.addr));
     const sellLink = bestVenue.startsWith("Odos") ? odosSellLink : uniSellLink;
 
-    const msg = [
-      "🔥 <b>ARBITRAGE SIGNAL</b>  <b>" + sym + "/USDC</b>",
-      "",
-      `Size: <b>$${USDC_IN}</b>`,
-      `Buy (Sushi): <b>$${USDC_IN}</b> → <b>${fmt(tokenBought, 6)} ${sym}</b>`,
-      `Best sell: <b>${bestVenue}</b> → <b>$${fmt(usdcOut, 2)}</b>`,
-      "",
-      `Profit: <b>+${pct(profitPct, 2)}%</b>`,
-      `Execution window: <b>${windowText}</b>`,
-      "",
-      `${buyLink}`,
-      `${sellLink}`,
-      "",
-      `<i>Reason: ${decision.reason}</i>`
-    ].join("\n");
+    const msg = buildSignalMessage({
+      sym,
+      usdcIn: USDC_IN,
+      tokenBought,
+      bestVenue,
+      usdcOut,
+      profitPctVal,
+      reason: decision.reason,
+      buyLink,
+      sellLink
+    });
 
     try {
       await tgBroadcast(msg);
@@ -349,11 +383,11 @@ async function main() {
       // update state only on successful send
       const ts = nowSec();
       state.pairs[key].lastSentAt = ts;
-      state.pairs[key].lastSentProfit = profitPct;
+      state.pairs[key].lastSentProfit = profitPctVal;
       state.pairs[key].lastVenue = bestVenue;
 
       writeState(state);
-      console.log(`${sym}: sent (${decision.reason}) profit=${profitPct}`);
+      console.log(`${sym}: sent (${decision.reason}) profit=${profitPctVal}`);
     } catch (e) {
       console.error("TELEGRAM ERROR:", e?.response?.data || e?.message || e);
     }
