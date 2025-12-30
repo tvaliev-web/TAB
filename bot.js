@@ -94,19 +94,23 @@ function fmt(n, d = 4) {
 }
 
 // ✅ ONLY CHANGE: send to ALL chat IDs
-async function tgSendHTML(html) {
+async function tgSend(text) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
-  for (const chat_id of CHAT_IDS) {
+  const ids = String(CHAT_ID)
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  for (const id of ids) {
     await axios.post(
       url,
       {
-        chat_id,
-        text: html,
-        parse_mode: "HTML",
+        chat_id: id,
+        text,
         disable_web_page_preview: true,
       },
-      { timeout: 20000 }
+      { timeout: 15000 }
     );
   }
 }
