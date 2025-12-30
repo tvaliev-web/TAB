@@ -1,14 +1,4 @@
 {
-  "pairs": {
-    "polygon:0x8bc8e9f621ee8babda8dc0e6fc991aaf9bf8510b:LINK/USDC": {},
-    "polygon:0xcd353f79d9fade311fc3119b841e1f456b54e858:WMATIC/USDC": {
-      "lastSentAt": 1767023058,
-      "lastSentProfit": 1.6592711748655051,
-      "lastSushi": 0.1060572230687573,
-      "lastOdos": 0.107817
-    }
-  },
-  "meta": {
-    "lastAnySentAt": 1767023058
-  }
+  "pairs": {},
+  "meta": { "lastAnySentAt": 0 }
 }
