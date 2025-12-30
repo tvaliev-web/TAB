@@ -23,6 +23,13 @@ jobs:
 
       - name: Install deps
         run: npm install
+        
+      - name: Telegram smoke test (must send)
+        run: |
+          curl -sS -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.CHAT_ID }}" \
+            -d "text=✅ TELEGRAM TEST FROM GITHUB ACTIONS"
+
 
       - name: Run bot
         env:
