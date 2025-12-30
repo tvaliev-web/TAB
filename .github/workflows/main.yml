@@ -27,7 +27,7 @@ jobs:
           node-version: 20
 
       - name: Install deps
-        run: npm ci || npm install
+        run: npm install --no-audit --no-fund
 
       - name: Run bot
         env:
@@ -42,10 +42,10 @@ jobs:
           COOLDOWN_SEC: "600"
           BIG_JUMP_BYPASS: "1.0"
 
-          # "execution window" (quote TTL heuristic)
+          # "execution window" estimate
           QUOTE_TTL_SEC: "120"
 
-          # demo message only on manual run
+          # demo + example signal on MANUAL run
           SEND_DEMO_ON_MANUAL: "1"
         run: node bot.js
 
