@@ -12,17 +12,12 @@ const { ethers } = require("ethers");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TG_TOKEN;
 const CHAT_ID = process.env.CHAT_ID || process.env.TG_CHAT_ID; // can be "id1,id2,id3"
+const CHAT_IDS = String(CHAT_ID).split(",").map(x => x.trim());
 const RPC_URL = process.env.RPC_URL;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID) throw new Error("CHAT_ID missing");
 if (!RPC_URL) throw new Error("RPC_URL missing");
-
-// ✅ ONLY CHANGE: allow multiple recipients (comma-separated CHAT_ID secret)
-const CHAT_IDS = String(CHAT_ID)
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
