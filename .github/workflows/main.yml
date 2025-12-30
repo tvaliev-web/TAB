@@ -23,13 +23,6 @@ jobs:
 
       - name: Install deps
         run: npm install
-        
-      - name: Telegram smoke test (must send)
-        run: |
-          curl -sS -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.CHAT_ID }}" \
-            -d "text=✅ TELEGRAM TEST FROM GITHUB ACTIONS"
-
 
       - name: Run bot
         env:
@@ -37,16 +30,15 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
 
+          # trade sizing
+          TRADE_USDC: "1000"
+
           # signal tuning
           MIN_PROFIT_PCT: "1"
           PROFIT_STEP_PCT: "0.25"
           COOLDOWN_SEC: "600"
           BIG_JUMP_BYPASS: "1.0"
           MIN_SECONDS_BETWEEN_ANY: "60"
-
-          # demo + window
-          SEND_DEMO_ON_MANUAL: "1"
-          QUOTE_TTL_SEC: "60"
         run: node bot.js
 
       - name: Commit state.json if changed
