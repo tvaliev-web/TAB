@@ -35,17 +35,25 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
 
-          # sizing + signal
-          USDC_IN: "1000"
+          CHAIN_ID: "137"
+
+          # sizes shown in the message (🟢🟠🔴)
+          SIZES: "100,1000,3000"
+
+          # signal rules
           MIN_PROFIT_PCT: "1.0"
           PROFIT_STEP_PCT: "0.25"
           COOLDOWN_SEC: "600"
           BIG_JUMP_BYPASS: "1.0"
 
-          # "execution window" estimate
+          # after gas + slippage
+          SLIPPAGE_PCT: "0.30"
+          GAS_USDC_CYCLE: "0.25"
+
+          # window estimate helper
           QUOTE_TTL_SEC: "120"
 
-          # demo + example signal on MANUAL run
+          # demo signal on MANUAL run only
           SEND_DEMO_ON_MANUAL: "1"
         run: node bot.js
 
