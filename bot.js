@@ -1,9 +1,9 @@
 // bot.js (CommonJS)
 // Polygon arb notifier:
-// BUY = Sushi (USDC -> COIN) using router getAmountsOut
+// BUY = Sushi (USDC -> COIN) via router getAmountsOut
 // SELL = best of (Uniswap V3 QuoterV2, Odos quote) (COIN -> USDC)
-// Sends Telegram alerts when profit >= MIN_PROFIT_PCT
-// Re-sends only if profit increases by PROFIT_STEP_PCT (state.json), with cooldown.
+// Message shows comparison for $100 / $1000 / $3000 with 🟢🟠🔴 on each line.
+// Alerts only when BEST net profit >= MIN_PROFIT_PCT, and re-alerts only when it grows by PROFIT_STEP_PCT (state.json + cooldown).
 //
 // CHAT_ID supports multiple IDs: "id1,id2,id3"
 
@@ -31,19 +31,29 @@ if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty");
 // ---------- CONFIG ----------
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
-// Trade sizing
-const USDC_IN = Number(process.env.USDC_IN || 1000); // in dollars
-const USDC_DECIMALS = 6;
+// We always compare these sizes in the message:
+const SIZES = String(process.env.SIZES || "100,1000,3000")
+  .split(",")
+  .map((x) => Number(x.trim()))
+  .filter((x) => Number.isFinite(x) && x > 0);
 
 // Signal tuning
 const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 1.0);
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
+
+// “Execution window” text (we compute a smarter range, but you can keep this as default)
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// Demo behavior
-const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "0") === "1";
+// IMPORTANT: We apply slippage + gas to make profit “after gas + slippage”.
+// Slippage haircut applied to SELL proceeds (both Uni and Odos):
+const SLIPPAGE_PCT = Number(process.env.SLIPPAGE_PCT || 0.30); // 0.30% default
+// Gas estimate per 1 full cycle (buy + sell) in USDC:
+const GAS_USDC_CYCLE = Number(process.env.GAS_USDC_CYCLE || 0.25); // conservative default; tune if needed
+
+// Demo behavior: send ONE demo signal message on manual run
+const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
 // Tokens (Polygon)
 const TOKENS = {
@@ -53,7 +63,7 @@ const TOKENS = {
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 }
 };
 
-// Track these coins (edit if you want)
+// Track these coins
 const WATCH = ["LINK", "WMATIC", "AAVE"];
 
 // SushiSwap Router (Polygon)
@@ -68,7 +78,7 @@ const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// Odos quote endpoint (use v3 first; fallback to v2)
+// Odos quote endpoint (v3 then fallback to v2)
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
 
@@ -147,17 +157,16 @@ const uniQuoterV2Abi = [
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)"
 ];
 
-async function quoteSushiExactOutUSDCtoToken(provider, tokenAddr, amountUsdc) {
+async function quoteSushi_USDC_to_TOKEN(provider, tokenAddr, usdcAmount) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const amountIn = ethers.parseUnits(String(amountUsdc), USDC_DECIMALS);
+  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals); // bigint
   const pathArr = [TOKENS.USDC.addr, tokenAddr];
   const amounts = await router.getAmountsOut(amountIn, pathArr);
-  return amounts[amounts.length - 1];
+  return amounts[amounts.length - 1]; // bigint tokenOut
 }
 
-async function quoteUniV3TokenToUSDC_best(provider, tokenAddr, tokenAmountIn) {
+async function quoteUniV3_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
   const q = new ethers.Contract(UNI_QUOTER_V2, uniQuoterV2Abi, provider);
-
   let best = null;
 
   for (const fee of UNI_FEES) {
@@ -166,24 +175,22 @@ async function quoteUniV3TokenToUSDC_best(provider, tokenAddr, tokenAmountIn) {
         tokenIn: tokenAddr,
         tokenOut: TOKENS.USDC.addr,
         amountIn: tokenAmountIn,
-        fee: fee,
+        fee,
         sqrtPriceLimitX96: 0
       };
       const res = await q.quoteExactInputSingle(params);
-      const amountOut = res[0];
+      const amountOut = res[0]; // bigint
       if (!best || amountOut > best.amountOut) best = { amountOut, fee };
     } catch (_) {}
   }
 
-  return best;
+  return best; // {amountOut, fee} or null
 }
 
-async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn) {
-  const amountStr = tokenAmountIn.toString();
-
+async function quoteOdos_TOKEN_to_USDC(tokenAddr, tokenAmountIn) {
   const body = {
     chainId: CHAIN_ID,
-    inputTokens: [{ tokenAddress: tokenAddr, amount: amountStr }],
+    inputTokens: [{ tokenAddress: tokenAddr, amount: tokenAmountIn.toString() }],
     outputTokens: [{ tokenAddress: TOKENS.USDC.addr, proportion: 1 }],
     userAddr: "0x0000000000000000000000000000000000000001",
     slippageLimitPercent: 0.30,
@@ -204,20 +211,38 @@ async function quoteOdosTokenToUSDC(tokenAddr, tokenAmountIn) {
 
   const out = res?.data?.outAmounts?.[0];
   if (!out) throw new Error("Odos quote missing outAmounts");
-  return BigInt(out);
+  return BigInt(out); // USDC out (base units)
+}
+
+// ---------- PROFIT (AFTER SLIPPAGE + GAS) ----------
+function applySlippage(usdcOutBase) {
+  // haircut on proceeds
+  const factor = 1 - SLIPPAGE_PCT / 100;
+  const out = Number(ethers.formatUnits(usdcOutBase, TOKENS.USDC.decimals)) * factor;
+  return ethers.parseUnits(out.toFixed(TOKENS.USDC.decimals), TOKENS.USDC.decimals);
+}
+
+function subtractGas(usdcOutBase) {
+  const gasBase = ethers.parseUnits(GAS_USDC_CYCLE.toString(), TOKENS.USDC.decimals);
+  return usdcOutBase > gasBase ? (usdcOutBase - gasBase) : 0n;
+}
+
+function netProfitPct(usdcInDollars, usdcOutBase) {
+  const usdcInBase = ethers.parseUnits(String(usdcInDollars), TOKENS.USDC.decimals);
+  const diff = usdcOutBase - usdcInBase;
+  return (Number(diff) / Number(usdcInBase)) * 100;
 }
 
 // ---------- SIGNAL RULES ----------
-function shouldSend(statePair, profitPct) {
+function shouldSend(statePair, profitPctVal) {
   const now = nowSec();
-
   const lastSentAt = statePair?.lastSentAt || 0;
   const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
-  if (profitPct < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
+  if (profitPctVal < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
   const since = now - lastSentAt;
-  const growth = profitPct - lastSentProfit;
+  const growth = profitPctVal - lastSentProfit;
 
   if (growth >= BIG_JUMP_BYPASS) return { ok: true, reason: "big_jump" };
   if (since < COOLDOWN_SEC) return { ok: false, reason: "cooldown" };
@@ -226,58 +251,129 @@ function shouldSend(statePair, profitPct) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- MESSAGE BUILDER ----------
+// ---------- EMOJI FOR EACH SIZE LINE ----------
+function emojiForPct(p) {
+  if (!Number.isFinite(p)) return "🔴";
+  if (p >= MIN_PROFIT_PCT + 0.5) return "🟢";
+  if (p >= MIN_PROFIT_PCT) return "🟠";
+  return "🔴";
+}
+
+// ---------- EXECUTION WINDOW (simple but makes sense) ----------
+function estimateWindowText(statePair) {
+  // If we have recent samples in statePair.samples (optional), use volatility:
+  const s = Array.isArray(statePair?.samples) ? statePair.samples : [];
+  if (s.length >= 2) {
+    const a = s[s.length - 1].p;
+    const b = s[s.length - 2].p;
+    const delta = Math.abs(a - b);
+    if (delta < 0.20) return "2–6 minutes";
+    if (delta < 0.50) return "1–4 minutes";
+    return "30–120 seconds";
+  }
+  // fallback
+  if (QUOTE_TTL_SEC >= 240) return "2–6 minutes";
+  if (QUOTE_TTL_SEC >= 120) return "1–4 minutes";
+  return "~1–2 minutes";
+}
+
+function pushSample(statePair, profitPctVal) {
+  statePair.samples = Array.isArray(statePair.samples) ? statePair.samples : [];
+  statePair.samples.push({ t: nowSec(), p: profitPctVal });
+  // keep last 30 samples
+  if (statePair.samples.length > 30) statePair.samples = statePair.samples.slice(-30);
+  statePair.lastAnyAt = nowSec();
+}
+
+// ---------- MESSAGE BUILDER (YOUR FINAL FORMAT) ----------
 function buildSignalMessage({
   sym,
-  usdcIn,
-  tokenBought,
-  bestVenue,
-  usdcOut,
-  profitPctVal,
-  reason,
-  buyLink,
-  sellLink
+  buyHref,
+  sellHref,
+  sellName,
+  perSizeLines,
+  windowText
 }) {
-  const windowText = `~${QUOTE_TTL_SEC}s`;
-
   return [
-    "🔥 <b>ARBITRAGE SIGNAL</b>  <b>" + sym + "/USDC</b>",
+    `🔥 <b>ARBITRAGE SIGNAL — ${sym} / USDC</b>`,
     "",
-    `Size: <b>$${usdcIn}</b>`,
-    `Buy (Sushi): <b>$${usdcIn}</b> → <b>${fmt(tokenBought, 6)} ${sym}</b>`,
-    `Best sell: <b>${bestVenue}</b> → <b>$${fmt(usdcOut, 2)}</b>`,
+    `Buy: ${buyHref}`,
+    `Sell: ${sellHref}`,
     "",
-    `Profit: <b>+${pct(profitPctVal, 2)}%</b>`,
-    `Execution window: <b>${windowText}</b>`,
+    `💰 <b>Profit (after gas + slippage)</b>`,
     "",
-    `${buyLink}`,
-    `${sellLink}`,
+    ...perSizeLines,
     "",
-    `<i>Reason: ${reason}</i>`
+    `⏱ <b>Execution window:</b> ${windowText}`,
+    "",
+    `• 🟢 = smallest impact`,
+    `• 🟠 = medium impact`,
+    `• 🔴 = higher impact / more likely to slip`
   ].join("\n");
 }
 
-// ---------- DEMO SIGNAL (ALWAYS SENDS ON MANUAL RUN) ----------
-async function sendDemoSignal() {
-  // Use WMATIC demo so you see exact format + links
-  const sym = "WMATIC";
+// ---------- DEMO (SENDS SAME FINAL FORMAT ON MANUAL RUN) ----------
+async function sendDemoSignalForSym(provider, sym) {
   const t = TOKENS[sym];
 
-  const buyLink = linkA(`Sushi (buy USDC→${sym})`, sushiSwapLink(TOKENS.USDC.addr, t.addr));
-  const uniSellLink = linkA(`Uniswap (sell ${sym}→USDC)`, uniswapLink(t.addr, TOKENS.USDC.addr));
-  const odosSellLink = linkA(`Odos (sell ${sym}→USDC)`, odosLink(t.addr, TOKENS.USDC.addr));
+  const buyHref = linkA(
+    "SushiSwap",
+    sushiSwapLink(TOKENS.USDC.addr, t.addr)
+  );
 
-  // Fake numbers just for preview (does not depend on profit threshold)
+  // We do REAL quotes for demo so it “makes sense”
+  const results = [];
+  for (const size of SIZES) {
+    const tokenOut = await quoteSushi_USDC_to_TOKEN(provider, t.addr, size);
+
+    const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
+    const uniOut = uniBest ? uniBest.amountOut : null;
+
+    const odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
+
+    // choose best SELL
+    let bestOut = null;
+    let bestName = null;
+    if (uniOut && (!bestOut || uniOut > bestOut)) { bestOut = uniOut; bestName = "Uniswap"; }
+    if (odosOut && (!bestOut || odosOut > bestOut)) { bestOut = odosOut; bestName = "Odos"; }
+
+    if (!bestOut || !bestName) {
+      results.push({ size, pct: NaN, bestName: "?" });
+      continue;
+    }
+
+    // net out after slippage+gas
+    let netOut = applySlippage(bestOut);
+    netOut = subtractGas(netOut);
+
+    const p = netProfitPct(size, netOut);
+    results.push({ size, pct: p, bestName });
+  }
+
+  // pick SELL venue for top size (1000 usually) for the header links:
+  const pick = results.find(r => r.size === 1000) || results[0];
+  const sellName = pick?.bestName === "Odos" ? "Odos" : "Uniswap";
+
+  const sellHref =
+    sellName === "Odos"
+      ? linkA("Odos", odosLink(t.addr, TOKENS.USDC.addr))
+      : linkA("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
+
+  const perSizeLines = results.map(r => {
+    const em = emojiForPct(r.pct);
+    return `${em} <b>$${r.size}</b> → <b>${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%</b>`;
+  });
+
+  // window from state is not relevant for demo, keep sensible:
+  const windowText = "2–5 minutes";
+
   const msg = buildSignalMessage({
     sym,
-    usdcIn: USDC_IN,
-    tokenBought: 100.0,
-    bestVenue: "Odos (DEMO)",
-    usdcOut: USDC_IN * 1.03,
-    profitPctVal: 3.0,
-    reason: "demo_preview",
-    buyLink,
-    sellLink: `${uniSellLink} | ${odosSellLink}`
+    buyHref,
+    sellHref,
+    sellName,
+    perSizeLines,
+    windowText
   });
 
   await tgBroadcast(msg);
@@ -293,108 +389,125 @@ async function main() {
 
   const eventName = process.env.GITHUB_EVENT_NAME || "";
 
-  // Manual run: send BOT STARTED + DEMO SIGNAL EXAMPLE
+  // Manual run: send ONE demo signal (same final format)
   if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
-    const demo = [
-      "✅ <b>BOT STARTED</b>",
-      `Sizing: <b>$${USDC_IN}</b>`,
-      `Threshold: <b>${MIN_PROFIT_PCT}%</b> (step ${PROFIT_STEP_PCT}%)`,
-      `Recipients: <b>${CHAT_IDS.join(",")}</b>`
-    ].join("\n");
-    await tgBroadcast(demo);
-
-    // THIS is the "пример сигнала" you asked for
-    await sendDemoSignal();
+    // send demo for LINK (you can change to WMATIC if you want)
+    try {
+      await sendDemoSignalForSym(provider, "LINK");
+    } catch (e) {
+      console.error("DEMO ERROR:", e?.response?.status, e?.message || e);
+    }
   }
 
   for (const sym of WATCH) {
     const t = TOKENS[sym];
     if (!t) continue;
 
-    // IMPORTANT: keep compatible state keys (no reset)
-    // You already have entries like: "polygon:LINK:USDC:1000"
-    const key = `polygon:${sym}:USDC:${USDC_IN}`;
-    state.pairs[key] = state.pairs[key] || {};
+    // We keep your existing key style per size for samples:
+    // "polygon:LINK:USDC:1000"
+    // We'll store samples on the 1000 key (primary), but compute all sizes for message.
+    const primarySize = 1000;
+    const primaryKey = `polygon:${sym}:USDC:${primarySize}`;
+    state.pairs[primaryKey] = state.pairs[primaryKey] || {};
 
-    let tokenOutSushi, usdcBackUni, usdcBackOdos;
-    let uniBest = null;
+    let bestAcrossSizes = -999;
+    let bestSellName = null;
+    let bestSellLink = null;
 
-    try {
-      // BUY: Sushi USDC -> TOKEN (for $USDC_IN)
-      tokenOutSushi = await quoteSushiExactOutUSDCtoToken(provider, t.addr, USDC_IN);
+    const perSizeLines = [];
 
-      // SELL candidates: TOKEN -> USDC
-      uniBest = await quoteUniV3TokenToUSDC_best(provider, t.addr, tokenOutSushi);
-      if (uniBest) usdcBackUni = uniBest.amountOut;
+    for (const size of SIZES) {
+      const sizeKey = `polygon:${sym}:USDC:${size}`;
+      state.pairs[sizeKey] = state.pairs[sizeKey] || {};
 
-      usdcBackOdos = await quoteOdosTokenToUSDC(t.addr, tokenOutSushi);
-    } catch (e) {
-      console.error(sym, "QUOTE ERROR:", e?.response?.status, e?.message || e);
-      continue;
+      let tokenOut, uniBest, uniOut, odosOut;
+      try {
+        // BUY: Sushi
+        tokenOut = await quoteSushi_USDC_to_TOKEN(provider, t.addr, size);
+
+        // SELL: Uni + Odos
+        uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
+        uniOut = uniBest ? uniBest.amountOut : null;
+        odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
+      } catch (e) {
+        console.error(sym, "QUOTE ERROR:", e?.response?.status, e?.message || e);
+        perSizeLines.push(`🔴 <b>$${size}</b> → <b>n/a</b>`);
+        continue;
+      }
+
+      // choose best SELL
+      let bestOut = null;
+      let sellName = null;
+      if (uniOut && (!bestOut || uniOut > bestOut)) { bestOut = uniOut; sellName = "Uniswap"; }
+      if (odosOut && (!bestOut || odosOut > bestOut)) { bestOut = odosOut; sellName = "Odos"; }
+      if (!bestOut || !sellName) {
+        perSizeLines.push(`🔴 <b>$${size}</b> → <b>n/a</b>`);
+        continue;
+      }
+
+      // net out after slippage + gas
+      let netOut = applySlippage(bestOut);
+      netOut = subtractGas(netOut);
+
+      const p = netProfitPct(size, netOut);
+
+      // store samples on each size key (optional)
+      pushSample(state.pairs[sizeKey], p);
+
+      const em = emojiForPct(p);
+      perSizeLines.push(`${em} <b>$${size}</b> → <b>${p >= 0 ? "+" : ""}${pct(p, 2)}%</b>`);
+
+      if (p > bestAcrossSizes) {
+        bestAcrossSizes = p;
+        bestSellName = sellName;
+        bestSellLink =
+          sellName === "Odos"
+            ? linkA("Odos", odosLink(t.addr, TOKENS.USDC.addr))
+            : linkA("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
+      }
     }
 
-    // choose best sell
-    let bestVenue = null;
-    let bestUsdcOut = null;
-
-    if (usdcBackUni && (!bestUsdcOut || usdcBackUni > bestUsdcOut)) {
-      bestUsdcOut = usdcBackUni;
-      bestVenue = uniBest ? `UniswapV3 (fee ${uniBest.fee})` : "UniswapV3";
-    }
-    if (usdcBackOdos && (!bestUsdcOut || usdcBackOdos > bestUsdcOut)) {
-      bestUsdcOut = usdcBackOdos;
-      bestVenue = "Odos";
-    }
-
-    if (!bestUsdcOut || !bestVenue) continue;
-
-    const usdcInBase = ethers.parseUnits(String(USDC_IN), USDC_DECIMALS);
-    const profitPctVal = (Number(bestUsdcOut - usdcInBase) / Number(usdcInBase)) * 100;
-
-    const decision = shouldSend(state.pairs[key], profitPctVal);
+    // Decision based on BEST net profit across sizes (so it won’t miss)
+    const decision = shouldSend(state.pairs[primaryKey], bestAcrossSizes);
     if (!decision.ok) {
-      console.log(`${sym}: no send (${decision.reason}) profit=${profitPctVal}`);
+      // still write samples so window estimate gets better over time
+      writeState(state);
       continue;
     }
 
-    const tokenBought = Number(ethers.formatUnits(tokenOutSushi, t.decimals));
-    const usdcOut = Number(ethers.formatUnits(bestUsdcOut, USDC_DECIMALS));
-
-    const buyLink = linkA(`Sushi (buy USDC→${sym})`, sushiSwapLink(TOKENS.USDC.addr, t.addr));
-    const uniSellLink = linkA(`Uniswap (sell ${sym}→USDC)`, uniswapLink(t.addr, TOKENS.USDC.addr));
-    const odosSellLink = linkA(`Odos (sell ${sym}→USDC)`, odosLink(t.addr, TOKENS.USDC.addr));
-    const sellLink = bestVenue.startsWith("Odos") ? odosSellLink : uniSellLink;
+    const buyHref = linkA("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, t.addr));
+    const sellHref = bestSellLink || linkA("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
+    const windowText = estimateWindowText(state.pairs[primaryKey]);
 
     const msg = buildSignalMessage({
       sym,
-      usdcIn: USDC_IN,
-      tokenBought,
-      bestVenue,
-      usdcOut,
-      profitPctVal,
-      reason: decision.reason,
-      buyLink,
-      sellLink
+      buyHref,
+      sellHref,
+      sellName: bestSellName || "Uniswap",
+      perSizeLines,
+      windowText
     });
 
     try {
       await tgBroadcast(msg);
 
-      // update state only on successful send
+      // update state only on successful send (primary key)
       const ts = nowSec();
-      state.pairs[key].lastSentAt = ts;
-      state.pairs[key].lastSentProfit = profitPctVal;
-      state.pairs[key].lastVenue = bestVenue;
+      state.pairs[primaryKey].lastSentAt = ts;
+      state.pairs[primaryKey].lastSentProfit = bestAcrossSizes;
+      state.pairs[primaryKey].lastVenue = bestSellName || "Uniswap";
+
+      state.meta.lastAnySentAt = ts;
 
       writeState(state);
-      console.log(`${sym}: sent (${decision.reason}) profit=${profitPctVal}`);
     } catch (e) {
       console.error("TELEGRAM ERROR:", e?.response?.data || e?.message || e);
+      // don't fail actions
     }
   }
 }
 
-// never fail Actions (no red X spam)
+// never fail Actions
 main().catch((e) => {
   console.error("FATAL:", e?.message || e);
   process.exit(0);
