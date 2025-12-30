@@ -11,6 +11,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,6 +29,8 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           RPC_URL: ${{ secrets.RPC_URL }}
+
+          # signal tuning
           MIN_PROFIT_PCT: "1"
           PROFIT_STEP_PCT: "0.25"
           COOLDOWN_SEC: "600"
