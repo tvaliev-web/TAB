@@ -3,7 +3,7 @@ name: Link Arb Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"    
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
@@ -29,7 +29,7 @@ jobs:
       - name: Install deps
         run: npm install --no-audit --no-fund
 
-      - name: Run bot (loop inside run, ~1 min cadence)
+      - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
@@ -55,13 +55,7 @@ jobs:
 
           # demo signal on MANUAL run only
           SEND_DEMO_ON_MANUAL: "1"
-        run: |
-          set -e
-          for i in 1 2 3 4 5 6 7 8; do
-            echo "=== tick $i ==="
-            node bot.js
-            sleep 55
-          done
+        run: node bot.js
 
       - name: Commit state.json if changed
         run: |
