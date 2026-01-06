@@ -1,10 +1,12 @@
 // bot.js (CommonJS)
-// Polygon arb notifier:
-// BUY = Sushi (USDC -> COIN) via router getAmountsOut (BEST path: direct / via WMATIC / via WETH)
-// SELL = Uniswap V3 QuoterV2 + Odos quote (COIN -> USDC)
-// Message shows comparison for $100 / $1000 / $3000 with 🟢🟠🔴 per SELL option (Uniswap vs Odos) on each line.
-// Profit is AFTER slippage haircut + gas estimate (both applied in USDC base units).
-// Alerts only when BEST net profit (across sizes + venues) >= MIN_PROFIT_PCT,
+// Polygon arb notifier (3 venues):
+// BUY  = best of Sushi (router getAmountsOut) / Uniswap V3 QuoterV2 / Odos quote  (USDC -> COIN)
+// SELL = best of Sushi (router getAmountsOut) / Uniswap V3 QuoterV2 / Odos quote  (COIN -> USDC)
+//
+// Finds best BUY venue and best SELL venue (can be different), for each size.
+// Profit is AFTER: buy-slippage haircut + sell-slippage haircut + gas (all in USDC base units).
+//
+// Alerts only when BEST net profit (across sizes + routes) >= MIN_PROFIT_PCT,
 // and re-alerts only when it grows by PROFIT_STEP_PCT (state.json + cooldown).
 //
 // CHAT_ID supports multiple IDs: "id1,id2,id3"
@@ -27,7 +29,6 @@ const CHAT_IDS = String(CHAT_ID_RAW)
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean)
-  // keep only numeric ids (prevents "chat not found" from @username or garbage)
   .filter((s) => /^-?\d+$/.test(s));
 
 if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
@@ -35,14 +36,14 @@ if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric cha
 // ---------- CONFIG ----------
 const CHAIN_ID = Number(process.env.CHAIN_ID || 137);
 
-// We always compare these sizes in the message:
+// sizes shown in message
 const SIZES = String(process.env.SIZES || "100,1000,3000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
 // Signal tuning
-const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 1.0);
+const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.8); // <<< REQUIRED: 0.8% net
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
@@ -50,11 +51,15 @@ const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 // “Execution window”
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// IMPORTANT: Profit is “after gas + slippage”
-// Slippage haircut on SELL proceeds (both Uni + Odos), in percent:
-const SLIPPAGE_PCT = Number(process.env.SLIPPAGE_PCT || 0.30); // 0.30% default
-// Gas estimate per 1 full cycle (buy + sell), in USDC:
-const GAS_USDC_CYCLE = Number(process.env.GAS_USDC_CYCLE || 0.25);
+// Slippage haircuts (our own model, applied consistently to ALL venues)
+// (If you want 0.30% total, set 0.15+0.15, etc)
+const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.15);
+const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.15);
+
+// Gas model per swap leg (USDC). Total cycle gas = buyGas + sellGas
+const GAS_USDC_SUSHI = Number(process.env.GAS_USDC_SUSHI || 0.03);
+const GAS_USDC_UNI = Number(process.env.GAS_USDC_UNI || 0.05);
+const GAS_USDC_ODOS = Number(process.env.GAS_USDC_ODOS || 0.05);
 
 // Demo behavior: send ONE demo signal message on manual run
 const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
@@ -68,7 +73,6 @@ const TOKENS = {
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 }
 };
 
-// Track these coins
 const WATCH = ["LINK", "WMATIC", "AAVE"];
 
 // SushiSwap Router (Polygon)
@@ -77,7 +81,6 @@ const SUSHI_ROUTER = (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88
 // Uniswap V3 QuoterV2 (Polygon)
 const UNI_QUOTER_V2 = (process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase();
 
-// Try these fee tiers (in order) for Uniswap V3
 const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .split(",")
   .map((x) => Number(x.trim()))
@@ -126,7 +129,6 @@ async function tgSendTo(chatId, html) {
 }
 
 async function tgBroadcast(html) {
-  // IMPORTANT: one bad chat id should NOT break others
   for (const id of CHAT_IDS) {
     try {
       await tgSendTo(id, html);
@@ -144,7 +146,6 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
-// Telegram HTML breaks if href has raw "&" or quotes
 function safeHref(url) {
   return String(url).replace(/&/g, "&amp;").replace(/"/g, "%22");
 }
@@ -152,7 +153,7 @@ function linkA(text, url) {
   return `<a href="${safeHref(url)}">${escapeHtml(text)}</a>`;
 }
 
-// ---------- LINKS (clickable names, not raw URLs) ----------
+// ---------- LINKS ----------
 function sushiSwapLink(token0, token1) {
   return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
 }
@@ -172,61 +173,91 @@ const uniQuoterV2Abi = [
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)"
 ];
 
-// BUY on Sushi: pick best path (direct / via WMATIC / via WETH)
-async function quoteSushi_USDC_to_TOKEN_best(provider, tokenAddr, usdcAmount) {
+function gasForVenue(venue) {
+  if (venue === "Sushi") return GAS_USDC_SUSHI;
+  if (venue === "Uniswap") return GAS_USDC_UNI;
+  if (venue === "Odos") return GAS_USDC_ODOS;
+  return 0;
+}
+
+// Sushi: pick best path for amountsOut
+async function quoteSushi_bestAmountsOut(provider, amountIn, pathCandidates) {
   const router = new ethers.Contract(SUSHI_ROUTER, sushiRouterAbi, provider);
-  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals); // bigint
-
-  const candidates = [
-    [TOKENS.USDC.addr, tokenAddr], // direct
-    [TOKENS.USDC.addr, TOKENS.WMATIC.addr, tokenAddr], // via WMATIC
-    [TOKENS.USDC.addr, TOKENS.WETH.addr, tokenAddr] // via WETH
-  ];
-
   let bestOut = null;
 
-  for (const pathArr of candidates) {
+  for (const pathArr of pathCandidates) {
     try {
       const amounts = await router.getAmountsOut(amountIn, pathArr);
       const out = amounts[amounts.length - 1];
       if (!bestOut || out > bestOut) bestOut = out;
     } catch (_) {}
   }
-
-  if (!bestOut) throw new Error("Sushi BUY quote failed (all paths)");
-  return bestOut; // bigint tokenOut
+  return bestOut; // bigint or null
 }
 
-async function quoteUniV3_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
+// BUY on Sushi: USDC -> TOKEN (best path)
+async function quoteSushi_USDC_to_TOKEN_best(provider, tokenAddr, usdcAmount) {
+  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals);
+  const candidates = [
+    [TOKENS.USDC.addr, tokenAddr],
+    [TOKENS.USDC.addr, TOKENS.WMATIC.addr, tokenAddr],
+    [TOKENS.USDC.addr, TOKENS.WETH.addr, tokenAddr]
+  ];
+  const out = await quoteSushi_bestAmountsOut(provider, amountIn, candidates);
+  if (!out) throw new Error("Sushi BUY quote failed (all paths)");
+  return out;
+}
+
+// SELL on Sushi: TOKEN -> USDC (best path)
+async function quoteSushi_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
+  const candidates = [
+    [tokenAddr, TOKENS.USDC.addr],
+    [tokenAddr, TOKENS.WMATIC.addr, TOKENS.USDC.addr],
+    [tokenAddr, TOKENS.WETH.addr, TOKENS.USDC.addr]
+  ];
+  const out = await quoteSushi_bestAmountsOut(provider, tokenAmountIn, candidates);
+  if (!out) throw new Error("Sushi SELL quote failed (all paths)");
+  return out; // USDC base units
+}
+
+// Uniswap V3: exact input single for both directions
+async function quoteUniV3_bestExactIn(provider, tokenIn, tokenOut, amountIn) {
   const q = new ethers.Contract(UNI_QUOTER_V2, uniQuoterV2Abi, provider);
   let best = null;
 
   for (const fee of UNI_FEES) {
     try {
-      const params = {
-        tokenIn: tokenAddr,
-        tokenOut: TOKENS.USDC.addr,
-        amountIn: tokenAmountIn,
-        fee,
-        sqrtPriceLimitX96: 0
-      };
-      const res = await q.quoteExactInputSingle(params);
-      const amountOut = res[0]; // bigint
+      const params = { tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0 };
+      const res = await q.quoteExactInputSingle.staticCall(params);
+      const amountOut = res[0];
       if (!best || amountOut > best.amountOut) best = { amountOut, fee };
     } catch (_) {}
   }
-
   return best; // {amountOut, fee} or null
 }
 
-async function quoteOdos_TOKEN_to_USDC(tokenAddr, tokenAmountIn) {
+async function quoteUni_USDC_to_TOKEN_best(provider, tokenAddr, usdcAmount) {
+  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals);
+  const best = await quoteUniV3_bestExactIn(provider, TOKENS.USDC.addr, tokenAddr, amountIn);
+  if (!best) throw new Error("Uniswap BUY quote failed (no pool/fee)");
+  return best.amountOut; // token base units
+}
+
+async function quoteUni_TOKEN_to_USDC_best(provider, tokenAddr, tokenAmountIn) {
+  const best = await quoteUniV3_bestExactIn(provider, tokenAddr, TOKENS.USDC.addr, tokenAmountIn);
+  if (!best) throw new Error("Uniswap SELL quote failed (no pool/fee)");
+  return best.amountOut; // USDC base units
+}
+
+// Odos quote: generic (inputTokens -> outputTokens)
+async function quoteOdos(inputAddr, inputAmountBase, outputAddr) {
   const body = {
     chainId: CHAIN_ID,
-    inputTokens: [{ tokenAddress: tokenAddr, amount: tokenAmountIn.toString() }],
-    outputTokens: [{ tokenAddress: TOKENS.USDC.addr, proportion: 1 }],
-    // Odos needs a userAddr but quote is not wallet-specific for read-only.
+    inputTokens: [{ tokenAddress: inputAddr, amount: inputAmountBase.toString() }],
+    outputTokens: [{ tokenAddress: outputAddr, proportion: 1 }],
     userAddr: "0x0000000000000000000000000000000000000001",
-    slippageLimitPercent: 0.30,
+    // keep it >= our model so route exists; we still apply our own haircuts consistently
+    slippageLimitPercent: Number(Math.max(SLIPPAGE_BUY_PCT, SLIPPAGE_SELL_PCT, 0.1)),
     disableRFQs: true,
     compact: true
   };
@@ -244,33 +275,39 @@ async function quoteOdos_TOKEN_to_USDC(tokenAddr, tokenAmountIn) {
 
   const out = res?.data?.outAmounts?.[0];
   if (!out) throw new Error("Odos quote missing outAmounts");
-  return BigInt(out); // USDC out (base units)
+  return BigInt(out);
 }
 
-// ---------- PROFIT (AFTER SLIPPAGE + GAS) - ALL IN BASE UNITS ----------
+async function quoteOdos_USDC_to_TOKEN(provider, tokenAddr, usdcAmount) {
+  const amountIn = ethers.parseUnits(String(usdcAmount), TOKENS.USDC.decimals);
+  return await quoteOdos(TOKENS.USDC.addr, amountIn, tokenAddr);
+}
+
+async function quoteOdos_TOKEN_to_USDC(provider, tokenAddr, tokenAmountIn) {
+  return await quoteOdos(tokenAddr, tokenAmountIn, TOKENS.USDC.addr);
+}
+
+// ---------- COSTS / PROFIT (BASE UNITS) ----------
 const USDC_DEC = TOKENS.USDC.decimals;
 
-function slippageBps() {
-  // 0.30% => 30 bps
-  return Math.max(0, Math.round(SLIPPAGE_PCT * 100));
+function bpsFromPct(pct) {
+  return Math.max(0, Math.round(Number(pct) * 100)); // 0.15% => 15 bps
 }
 
-function applySlippageBase(usdcOutBase) {
-  // out * (10000 - bps) / 10000
-  const bps = slippageBps();
+function haircutBase(amountBase, pct) {
+  const bps = bpsFromPct(pct);
   const keep = 10000 - bps;
-  return (usdcOutBase * BigInt(keep)) / 10000n;
+  return (amountBase * BigInt(keep)) / 10000n;
 }
 
-function subtractGasBase(usdcOutBase) {
-  const gasBase = ethers.parseUnits(String(GAS_USDC_CYCLE), USDC_DEC);
+function subtractGasBase(usdcOutBase, gasUsdc) {
+  const gasBase = ethers.parseUnits(String(gasUsdc), USDC_DEC);
   return usdcOutBase > gasBase ? usdcOutBase - gasBase : 0n;
 }
 
 function netProfitPct(usdcInDollars, usdcOutBaseAfterCosts) {
   const usdcInBase = ethers.parseUnits(String(usdcInDollars), USDC_DEC);
   const diff = usdcOutBaseAfterCosts - usdcInBase;
-  // safe here for 100/1000/3000 (fits)
   return (Number(diff) / Number(usdcInBase)) * 100;
 }
 
@@ -292,13 +329,28 @@ function shouldSend(statePair, profitPctVal) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- EMOJI FOR EACH SIZE/OPTION (YOUR EXACT RULES) ----------
+// ---------- EMOJI ----------
 function emojiForPct(p) {
   if (!Number.isFinite(p)) return "❌";
   if (p >= 1.5) return "🟢";
   if (p >= 1.3) return "🟠";
-  if (p >= 1.0) return "🔴";
+  if (p >= 0.8) return "🔴"; // adjusted to match your MIN=0.8
   return "❌";
+}
+
+// ---------- RISK LEVEL ----------
+function riskLevelFromSamples(statePair) {
+  const s = Array.isArray(statePair?.samples) ? statePair.samples : [];
+  if (s.length < 2) return { level: "MED", emoji: "⚠️" };
+
+  const a = s[s.length - 1].p;
+  const b = s[s.length - 2].p;
+  const delta = Math.abs(a - b);
+
+  // tighter => lower risk
+  if (delta <= 0.15) return { level: "LOW", emoji: "✅" };
+  if (delta <= 0.40) return { level: "MED", emoji: "⚠️" };
+  return { level: "HIGH", emoji: "🧨" };
 }
 
 // ---------- EXECUTION WINDOW ----------
@@ -324,94 +376,148 @@ function pushSample(statePair, profitPctVal) {
   statePair.lastAnyAt = nowSec();
 }
 
-// ---------- MESSAGE BUILDER (YOUR FORMAT) ----------
+// ---------- ROUTE SEARCH ----------
+const VENUES = ["Sushi", "Uniswap", "Odos"];
+
+async function quoteBuy(provider, venue, tokenAddr, usdcIn) {
+  if (venue === "Sushi") return await quoteSushi_USDC_to_TOKEN_best(provider, tokenAddr, usdcIn);
+  if (venue === "Uniswap") return await quoteUni_USDC_to_TOKEN_best(provider, tokenAddr, usdcIn);
+  if (venue === "Odos") return await quoteOdos_USDC_to_TOKEN(provider, tokenAddr, usdcIn);
+  throw new Error("unknown buy venue");
+}
+
+async function quoteSell(provider, venue, tokenAddr, tokenInBase) {
+  if (venue === "Sushi") return await quoteSushi_TOKEN_to_USDC_best(provider, tokenAddr, tokenInBase);
+  if (venue === "Uniswap") return await quoteUni_TOKEN_to_USDC_best(provider, tokenAddr, tokenInBase);
+  if (venue === "Odos") return await quoteOdos_TOKEN_to_USDC(provider, tokenAddr, tokenInBase);
+  throw new Error("unknown sell venue");
+}
+
+// compute best route for one size
+async function bestRouteForSize(provider, sym, tokenAddr, usdcIn) {
+  let best = null;
+
+  for (const buyVenue of VENUES) {
+    let tokenOut;
+    try {
+      tokenOut = await quoteBuy(provider, buyVenue, tokenAddr, usdcIn);
+    } catch (_) {
+      continue;
+    }
+
+    // apply BUY slippage haircut on tokenOut
+    const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
+
+    for (const sellVenue of VENUES) {
+      let usdcOut;
+      try {
+        usdcOut = await quoteSell(provider, sellVenue, tokenAddr, tokenOutNet);
+      } catch (_) {
+        continue;
+      }
+
+      // apply SELL slippage haircut on USDC out
+      let usdcOutNet = haircutBase(usdcOut, SLIPPAGE_SELL_PCT);
+
+      // subtract gas for both legs
+      const gasTotal = gasForVenue(buyVenue) + gasForVenue(sellVenue);
+      usdcOutNet = subtractGasBase(usdcOutNet, gasTotal);
+
+      const p = netProfitPct(usdcIn, usdcOutNet);
+
+      if (!best || (Number.isFinite(p) && p > best.pct)) {
+        best = {
+          pct: p,
+          buyVenue,
+          sellVenue,
+          gasTotal
+        };
+      }
+    }
+  }
+
+  if (!best) return { pct: NaN, buyVenue: "?", sellVenue: "?", gasTotal: 0 };
+  return best;
+}
+
+// ---------- MESSAGE BUILDER ----------
 function buildSignalMessage({
   sym,
+  bestRouteText,
   buyHref,
-  sellHrefUni,
-  sellHrefOdos,
+  sellHref,
   perSizeLines,
-  windowText
+  windowText,
+  riskText
 }) {
   return [
     `🔥 <b>ARBITRAGE SIGNAL — ${escapeHtml(sym)} / USDC</b>`,
     "",
+    `Best route: <b>${escapeHtml(bestRouteText)}</b>`,
     `Buy: ${buyHref}`,
-    `Sell (Uniswap): ${sellHrefUni}`,
-    `Sell (Odos): ${sellHrefOdos}`,
+    `Sell: ${sellHref}`,
     "",
-    `💰 <b>Profit (after gas + slippage)</b>`,
+    `💰 <b>Net profit (after slippage + gas)</b>`,
     ...perSizeLines,
     "",
     `⏱ <b>Execution window:</b> ${escapeHtml(windowText)}`,
+    `${riskText}`,
     "",
     `🟢 ≥ 1.50%`,
     `🟠 1.30–1.49%`,
-    `🔴 1.00–1.29%`,
-    `❌ below 1.00% / n/a`
+    `🔴 0.80–1.29%`,
+    `❌ below 0.80% / n/a`
   ].join("\n");
 }
 
-// ---------- COMPUTE NET PROFIT FOR ONE VENUE ----------
-function computeNetPctForVenue(usdcIn, usdcOutBase, opts) {
-  if (!usdcOutBase) return { pct: NaN };
-
-  const applySlip = opts?.applySlippage !== false; // default true
-  const applyGas = opts?.applyGas !== false;       // default true
-
-  let net = applySlip ? applySlippageBase(usdcOutBase) : usdcOutBase;
-  net = applyGas ? subtractGasBase(net) : net;
-
-  const p = netProfitPct(usdcIn, net);
-  return { pct: p };
+function venueBuyLink(venue, tokenAddr) {
+  if (venue === "Sushi") return linkA("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, tokenAddr));
+  if (venue === "Uniswap") return linkA("Uniswap", uniswapLink(TOKENS.USDC.addr, tokenAddr));
+  if (venue === "Odos") return linkA("Odos", odosLink(TOKENS.USDC.addr, tokenAddr));
+  return linkA("?", sushiSwapLink(TOKENS.USDC.addr, tokenAddr));
 }
 
-// ---------- DEMO (SAME FINAL FORMAT) ----------
+function venueSellLink(venue, tokenAddr) {
+  if (venue === "Sushi") return linkA("SushiSwap", sushiSwapLink(tokenAddr, TOKENS.USDC.addr));
+  if (venue === "Uniswap") return linkA("Uniswap", uniswapLink(tokenAddr, TOKENS.USDC.addr));
+  if (venue === "Odos") return linkA("Odos", odosLink(tokenAddr, TOKENS.USDC.addr));
+  return linkA("?", sushiSwapLink(tokenAddr, TOKENS.USDC.addr));
+}
+
+// ---------- DEMO ----------
 async function sendDemoSignalForSym(provider, sym) {
   const t = TOKENS[sym];
 
-  const buyHref = linkA("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, t.addr));
-  const sellHrefUni = linkA("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
-  const sellHrefOdos = linkA("Odos", odosLink(t.addr, TOKENS.USDC.addr));
-
   const perSizeLines = [];
+  let bestAcrossAll = -999;
+  let bestPick = null;
 
   for (const size of SIZES) {
-    try {
-      const tokenOut = await quoteSushi_USDC_to_TOKEN_best(provider, t.addr, size);
+    const r = await bestRouteForSize(provider, sym, t.addr, size);
 
-      const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
-      const uniOut = uniBest ? uniBest.amountOut : null;
+    const em = emojiForPct(r.pct);
+    const val = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "n/a";
+    perSizeLines.push(
+      `${em} <b>$${size}</b> → <b>${val}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+    );
 
-      const odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
-
-      const uni = uniOut ? computeNetPctForVenue(size, uniOut) : { pct: NaN };
-
-      // FIX: do NOT apply your SLIPPAGE_PCT again on Odos (Odos quote already uses slippageLimitPercent)
-      const od = odosOut ? computeNetPctForVenue(size, odosOut, { applySlippage: false }) : { pct: NaN };
-
-      const uniText = Number.isFinite(uni.pct)
-        ? `${emojiForPct(uni.pct)} Uniswap <b>${uni.pct >= 0 ? "+" : ""}${pct(uni.pct, 2)}%</b>`
-        : `❌ Uniswap <b>n/a</b>`;
-
-      const odText = Number.isFinite(od.pct)
-        ? `${emojiForPct(od.pct)} Odos <b>${od.pct >= 0 ? "+" : ""}${pct(od.pct, 2)}%</b>`
-        : `❌ Odos <b>n/a</b>`;
-
-      perSizeLines.push(`<b>$${size}</b> → ${uniText} | ${odText}`);
-    } catch (e) {
-      console.error("DEMO QUOTE ERROR:", sym, size, e?.response?.status, e?.message || e);
-      perSizeLines.push(`<b>$${size}</b> → ❌ Uniswap <b>n/a</b> | ❌ Odos <b>n/a</b>`);
+    if (Number.isFinite(r.pct) && r.pct > bestAcrossAll) {
+      bestAcrossAll = r.pct;
+      bestPick = { ...r, size };
     }
   }
 
+  const buyHref = venueBuyLink(bestPick?.buyVenue || "Sushi", t.addr);
+  const sellHref = venueSellLink(bestPick?.sellVenue || "Uniswap", t.addr);
+
   const msg = buildSignalMessage({
     sym,
+    bestRouteText: bestPick ? `${bestPick.buyVenue} → ${bestPick.sellVenue} (size $${bestPick.size})` : `n/a`,
     buyHref,
-    sellHrefUni,
-    sellHrefOdos,
+    sellHref,
     perSizeLines,
-    windowText: "2–5 minutes"
+    windowText: "2–5 minutes",
+    riskText: `⚠️ <b>Risk:</b> MED`
   });
 
   await tgBroadcast(msg);
@@ -421,7 +527,7 @@ async function sendDemoSignalForSym(provider, sym) {
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-  // HARD sanity check: if your RPC is NOT Polygon, your quotes will be trash
+  // sanity: rpc chain must match polygon
   try {
     const net = await provider.getNetwork();
     const rpcChain = Number(net.chainId);
@@ -431,7 +537,6 @@ async function main() {
     }
   } catch (e) {
     console.error("NETWORK CHECK FAILED:", e?.message || e);
-    // continue anyway
   }
 
   const state = readState();
@@ -456,74 +561,58 @@ async function main() {
     const primaryKey = `polygon:${sym}:USDC:${primarySize}`;
     state.pairs[primaryKey] = state.pairs[primaryKey] || {};
 
-    // links
-    const buyHref = linkA("SushiSwap", sushiSwapLink(TOKENS.USDC.addr, t.addr));
-    const sellHrefUni = linkA("Uniswap", uniswapLink(t.addr, TOKENS.USDC.addr));
-    const sellHrefOdos = linkA("Odos", odosLink(t.addr, TOKENS.USDC.addr));
-
     const perSizeLines = [];
-
     let bestAcrossAll = -999;
+    let bestPick = null;
 
     for (const size of SIZES) {
       const sizeKey = `polygon:${sym}:USDC:${size}`;
       state.pairs[sizeKey] = state.pairs[sizeKey] || {};
 
+      let r;
       try {
-        const tokenOut = await quoteSushi_USDC_to_TOKEN_best(provider, t.addr, size);
-
-        const uniBest = await quoteUniV3_TOKEN_to_USDC_best(provider, t.addr, tokenOut);
-        const uniOut = uniBest ? uniBest.amountOut : null;
-
-        const odosOut = await quoteOdos_TOKEN_to_USDC(t.addr, tokenOut);
-
-        const uni = uniOut ? computeNetPctForVenue(size, uniOut) : { pct: NaN };
-
-        // FIX: do NOT apply your SLIPPAGE_PCT again on Odos
-        const od = odosOut ? computeNetPctForVenue(size, odosOut, { applySlippage: false }) : { pct: NaN };
-
-        // track best across venues + sizes
-        if (Number.isFinite(uni.pct) && uni.pct > bestAcrossAll) bestAcrossAll = uni.pct;
-        if (Number.isFinite(od.pct) && od.pct > bestAcrossAll) bestAcrossAll = od.pct;
-
-        // save samples (use BEST of the two for volatility estimate)
-        const bestThisSize = Math.max(
-          Number.isFinite(uni.pct) ? uni.pct : -999,
-          Number.isFinite(od.pct) ? od.pct : -999
-        );
-        if (bestThisSize > -900) pushSample(state.pairs[sizeKey], bestThisSize);
-
-        const uniText = Number.isFinite(uni.pct)
-          ? `${emojiForPct(uni.pct)} Uniswap <b>${uni.pct >= 0 ? "+" : ""}${pct(uni.pct, 2)}%</b>`
-          : `❌ Uniswap <b>n/a</b>`;
-
-        const odText = Number.isFinite(od.pct)
-          ? `${emojiForPct(od.pct)} Odos <b>${od.pct >= 0 ? "+" : ""}${pct(od.pct, 2)}%</b>`
-          : `❌ Odos <b>n/a</b>`;
-
-        perSizeLines.push(`<b>$${size}</b> → ${uniText} | ${odText}`);
+        r = await bestRouteForSize(provider, sym, t.addr, size);
       } catch (e) {
-        console.error(sym, "QUOTE ERROR:", size, e?.response?.status, e?.message || e);
-        perSizeLines.push(`<b>$${size}</b> → ❌ Uniswap <b>n/a</b> | ❌ Odos <b>n/a</b>`);
+        console.error(sym, "ROUTE ERROR:", size, e?.message || e);
+        perSizeLines.push(`❌ <b>$${size}</b> → <b>n/a</b> | Buy: <b>?</b> → Sell: <b>?</b>`);
+        continue;
+      }
+
+      const em = emojiForPct(r.pct);
+      const val = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "n/a";
+      perSizeLines.push(
+        `${em} <b>$${size}</b> → <b>${val}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+      );
+
+      if (Number.isFinite(r.pct)) pushSample(state.pairs[sizeKey], r.pct);
+
+      if (Number.isFinite(r.pct) && r.pct > bestAcrossAll) {
+        bestAcrossAll = r.pct;
+        bestPick = { ...r, size };
       }
     }
 
-    // decision based on BEST net profit across sizes+venues
     const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
     if (!decision.ok) {
       writeState(state);
       continue;
     }
 
+    const buyHref = venueBuyLink(bestPick?.buyVenue || "Sushi", t.addr);
+    const sellHref = venueSellLink(bestPick?.sellVenue || "Uniswap", t.addr);
+
     const windowText = estimateWindowText(state.pairs[primaryKey]);
+    const risk = riskLevelFromSamples(state.pairs[primaryKey]);
+    const riskText = `${risk.emoji} <b>Risk:</b> ${risk.level}`;
 
     const msg = buildSignalMessage({
       sym,
+      bestRouteText: bestPick ? `${bestPick.buyVenue} → ${bestPick.sellVenue} (size $${bestPick.size})` : `n/a`,
       buyHref,
-      sellHrefUni,
-      sellHrefOdos,
+      sellHref,
       perSizeLines,
-      windowText
+      windowText,
+      riskText
     });
 
     try {
@@ -532,6 +621,7 @@ async function main() {
       const ts = nowSec();
       state.pairs[primaryKey].lastSentAt = ts;
       state.pairs[primaryKey].lastSentProfit = bestAcrossAll;
+      state.pairs[primaryKey].lastRoute = bestPick ? `${bestPick.buyVenue}->${bestPick.sellVenue}` : "";
       state.meta.lastAnySentAt = ts;
 
       writeState(state);
@@ -541,7 +631,6 @@ async function main() {
   }
 }
 
-// never fail Actions
 main().catch((e) => {
   console.error("FATAL:", e?.message || e);
   process.exit(0);
