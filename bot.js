@@ -109,7 +109,7 @@ function nowSec() {
 }
 
 function pct(n, d = 2) {
-  if (!Number.isFinite(n)) return "n/a";
+  if (!Number.isFinite(n)) return "";
   return n.toFixed(d);
 }
 
@@ -290,12 +290,12 @@ async function quoteOdos_TOKEN_to_USDC(provider, tokenAddr, tokenAmountIn) {
 // ---------- COSTS / PROFIT (BASE UNITS) ----------
 const USDC_DEC = TOKENS.USDC.decimals;
 
-function bpsFromPct(pct) {
-  return Math.max(0, Math.round(Number(pct) * 100)); // 0.15% => 15 bps
+function bpsFromPct(pctVal) {
+  return Math.max(0, Math.round(Number(pctVal) * 100)); // 0.15% => 15 bps
 }
 
-function haircutBase(amountBase, pct) {
-  const bps = bpsFromPct(pct);
+function haircutBase(amountBase, pctVal) {
+  const bps = bpsFromPct(pctVal);
   const keep = 10000 - bps;
   return (amountBase * BigInt(keep)) / 10000n;
 }
@@ -331,7 +331,7 @@ function shouldSend(statePair, profitPctVal) {
 
 // ---------- EMOJI ----------
 function emojiForPct(p) {
-  if (!Number.isFinite(p)) return "❌";
+  if (!Number.isFinite(p)) return "";
   if (p >= 1.5) return "🟢";
   if (p >= 1.3) return "🟠";
   if (p >= 0.8) return "🔴"; // adjusted to match your MIN=0.8
@@ -342,6 +342,9 @@ function emojiForPct(p) {
 function riskLevelFromSamples(statePair) {
   const s = Array.isArray(statePair?.samples) ? statePair.samples : [];
   if (s.length < 2) return { level: "MED", emoji: "⚠️" };
+
+  const lastP = s[s.length - 1].p;
+  if (Number.isFinite(lastP) && lastP < 0) return { level: "HIGH", emoji: "🧨" }; // FIX: losses => HIGH
 
   const a = s[s.length - 1].p;
   const b = s[s.length - 2].p;
@@ -445,19 +448,20 @@ async function bestRouteForSize(provider, sym, tokenAddr, usdcIn) {
 // ---------- MESSAGE BUILDER ----------
 function buildSignalMessage({
   sym,
-  bestRouteText,
-  buyHref,
-  sellHref,
+  bestRouteHtml,
   perSizeLines,
   windowText,
-  riskText
+  riskText,
+  isTest
 }) {
+  const title = isTest
+    ? `🧪 <b>TEST — ARBITRAGE SIGNAL — ${escapeHtml(sym)} / USDC</b>`
+    : `🔥 <b>ARBITRAGE SIGNAL — ${escapeHtml(sym)} / USDC</b>`;
+
   return [
-    `🔥 <b>ARBITRAGE SIGNAL — ${escapeHtml(sym)} / USDC</b>`,
+    title,
     "",
-    `Best route: <b>${escapeHtml(bestRouteText)}</b>`,
-    `Buy: ${buyHref}`,
-    `Sell: ${sellHref}`,
+    `Best route: <b>${bestRouteHtml}</b>`,
     "",
     `💰 <b>Net profit (after slippage + gas)</b>`,
     ...perSizeLines,
@@ -468,7 +472,7 @@ function buildSignalMessage({
     `🟢 ≥ 1.50%`,
     `🟠 1.30–1.49%`,
     `🔴 0.80–1.29%`,
-    `❌ below 0.80% / n/a`
+    `❌ below 0.80%`
   ].join("\n");
 }
 
@@ -479,11 +483,13 @@ function venueBuyLink(venue, tokenAddr) {
   return linkA("?", sushiSwapLink(TOKENS.USDC.addr, tokenAddr));
 }
 
-function venueSellLink(venue, tokenAddr) {
-  if (venue === "Sushi") return linkA("SushiSwap", sushiSwapLink(tokenAddr, TOKENS.USDC.addr));
-  if (venue === "Uniswap") return linkA("Uniswap", uniswapLink(tokenAddr, TOKENS.USDC.addr));
-  if (venue === "Odos") return linkA("Odos", odosLink(tokenAddr, TOKENS.USDC.addr));
-  return linkA("?", sushiSwapLink(tokenAddr, TOKENS.USDC.addr));
+function bestRouteLinkHtml(buyVenue, sellVenue, tokenAddr) {
+  const text = `${buyVenue} → ${sellVenue}`;
+  // link points to the BUY venue swap page (USDC -> TOKEN)
+  if (buyVenue === "Sushi") return linkA(text, sushiSwapLink(TOKENS.USDC.addr, tokenAddr));
+  if (buyVenue === "Uniswap") return linkA(text, uniswapLink(TOKENS.USDC.addr, tokenAddr));
+  if (buyVenue === "Odos") return linkA(text, odosLink(TOKENS.USDC.addr, tokenAddr));
+  return linkA(text, sushiSwapLink(TOKENS.USDC.addr, tokenAddr));
 }
 
 // ---------- DEMO ----------
@@ -498,9 +504,9 @@ async function sendDemoSignalForSym(provider, sym) {
     const r = await bestRouteForSize(provider, sym, t.addr, size);
 
     const em = emojiForPct(r.pct);
-    const val = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "n/a";
+    const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
     perSizeLines.push(
-      `${em} <b>$${size}</b> → <b>${val}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+      `${em} <b>$${size} USDC input</b> → <b>${pStr}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
     );
 
     if (Number.isFinite(r.pct) && r.pct > bestAcrossAll) {
@@ -509,17 +515,22 @@ async function sendDemoSignalForSym(provider, sym) {
     }
   }
 
-  const buyHref = venueBuyLink(bestPick?.buyVenue || "Sushi", t.addr);
-  const sellHref = venueSellLink(bestPick?.sellVenue || "Uniswap", t.addr);
+  const bestRouteHtml = bestPick
+    ? bestRouteLinkHtml(bestPick.buyVenue, bestPick.sellVenue, t.addr)
+    : escapeHtml("n/a");
+
+  const riskText =
+    Number.isFinite(bestAcrossAll) && bestAcrossAll < 0
+      ? `🧨 <b>Risk:</b> HIGH`
+      : `⚠️ <b>Risk:</b> MED`;
 
   const msg = buildSignalMessage({
     sym,
-    bestRouteText: bestPick ? `${bestPick.buyVenue} → ${bestPick.sellVenue} (size $${bestPick.size})` : `n/a`,
-    buyHref,
-    sellHref,
+    bestRouteHtml,
     perSizeLines,
     windowText: "2–5 minutes",
-    riskText: `⚠️ <b>Risk:</b> MED`
+    riskText,
+    isTest: true
   });
 
   await tgBroadcast(msg);
@@ -584,14 +595,14 @@ async function main() {
         r = await bestRouteForSize(provider, sym, t.addr, size);
       } catch (e) {
         console.error(sym, "ROUTE ERROR:", size, e?.message || e);
-        perSizeLines.push(`❌ <b>$${size}</b> → <b>n/a</b> | Buy: <b>?</b> → Sell: <b>?</b>`);
+        perSizeLines.push(`❌ <b>$${size} USDC input</b> → <b>—</b> | Buy: <b>?</b> → Sell: <b>?</b>`);
         continue;
       }
 
       const em = emojiForPct(r.pct);
-      const val = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "n/a";
+      const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
       perSizeLines.push(
-        `${em} <b>$${size}</b> → <b>${val}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+        `${em} <b>$${size} USDC input</b> → <b>${pStr}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
       );
 
       if (Number.isFinite(r.pct)) pushSample(state.pairs[sizeKey], r.pct);
@@ -608,8 +619,9 @@ async function main() {
       continue;
     }
 
-    const buyHref = venueBuyLink(bestPick?.buyVenue || "Sushi", t.addr);
-    const sellHref = venueSellLink(bestPick?.sellVenue || "Uniswap", t.addr);
+    const bestRouteHtml = bestPick
+      ? bestRouteLinkHtml(bestPick.buyVenue, bestPick.sellVenue, t.addr)
+      : escapeHtml("n/a");
 
     const windowText = estimateWindowText(state.pairs[primaryKey]);
     const risk = riskLevelFromSamples(state.pairs[primaryKey]);
@@ -617,12 +629,11 @@ async function main() {
 
     const msg = buildSignalMessage({
       sym,
-      bestRouteText: bestPick ? `${bestPick.buyVenue} → ${bestPick.sellVenue} (size $${bestPick.size})` : `n/a`,
-      buyHref,
-      sellHref,
+      bestRouteHtml,
       perSizeLines,
       windowText,
-      riskText
+      riskText,
+      isTest: false
     });
 
     try {
