@@ -409,6 +409,8 @@ async function bestRouteForSize(provider, sym, tokenAddr, usdcIn) {
     const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
 
     for (const sellVenue of VENUES) {
+      if (sellVenue === buyVenue) continue; // FIX: no VENUE->same VENUE (ODOS->ODOS etc)
+
       let usdcOut;
       try {
         usdcOut = await quoteSell(provider, sellVenue, tokenAddr, tokenOutNet);
@@ -545,11 +547,19 @@ async function main() {
 
   const eventName = process.env.GITHUB_EVENT_NAME || "";
 
+  // FIX: demo only ONCE per manual workflow run (no spam across the 8 ticks)
   if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
-    try {
-      await sendDemoSignalForSym(provider, "LINK");
-    } catch (e) {
-      console.error("DEMO ERROR:", e?.response?.status, e?.response?.data || e?.message || e);
+    const runId = String(process.env.GITHUB_RUN_ID || "");
+    const demoTag = runId || "manual";
+    if (state.meta.demoSentTag !== demoTag) {
+      try {
+        await sendDemoSignalForSym(provider, "LINK");
+        state.meta.demoSentTag = demoTag;
+        state.meta.demoSentAt = nowSec();
+        writeState(state);
+      } catch (e) {
+        console.error("DEMO ERROR:", e?.response?.status, e?.response?.data || e?.message || e);
+      }
     }
   }
 
