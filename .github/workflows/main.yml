@@ -38,10 +38,10 @@ jobs:
           CHAIN_ID: "137"
 
           # sizes shown in the message (🟢🟠🔴)
-          SIZES: "100,1000,3000"
+          SIZES: "100,1000,5000"
 
-          # signal rules (your request: min profit 0.8% AFTER costs)
-          MIN_PROFIT_PCT: "0.8"
+          # signal rules (your request: min profit 0.7% AFTER costs)
+          MIN_PROFIT_PCT: "0.7"
           PROFIT_STEP_PCT: "0.10"
           COOLDOWN_SEC: "60"
           BIG_JUMP_BYPASS: "1.0"
