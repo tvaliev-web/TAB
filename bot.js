@@ -2,19 +2,6 @@
 // Polygon/Base/Arbitrum arb notifier (multi-chain, multi-venue):
 // BUY  = best venue quote (STABLE -> COIN)
 // SELL = best venue quote (COIN -> STABLE)
-//
-// Venues supported (depending on chain/env):
-// - Uniswap V3 QuoterV2 (quoteExactInputSingle)
-// - UniswapV2-style Routers via getAmountsOut (Sushi, QuickSwap, Aerodrome, Camelot, etc.)
-// - Odos API quote
-//
-// Finds best BUY venue and best SELL venue (can be different), for each size.
-// Profit is AFTER: buy-slippage haircut + sell-slippage haircut + gas (all in USDC base units).
-//
-// Alerts only when BEST net profit (across sizes + routes) >= MIN_PROFIT_PCT,
-// and re-alerts only when it grows by PROFIT_STEP_PCT (state.json + cooldown).
-//
-// CHAT_ID supports multiple IDs: "id1,id2,id3"
 
 const fs = require("fs");
 const path = require("path");
@@ -36,8 +23,6 @@ if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID_RAW) throw new Error("CHAT_ID missing");
 if (!RPC_URL) throw new Error("RPC_URL missing (Polygon)");
 
-// If you want Base/Arbitrum, set RPC_URL_BASE / RPC_URL_ARBITRUM. Otherwise they are skipped.
-
 const CHAT_IDS = String(CHAT_ID_RAW)
   .split(",")
   .map((s) => s.trim())
@@ -47,14 +32,13 @@ const CHAT_IDS = String(CHAT_ID_RAW)
 if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
 
 // ---------- CONFIG ----------
-// sizes shown in message
 const SIZES = String(process.env.SIZES || "100,1000,3000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// Signal tuning
-const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.7); // <<< 0.7% net
+// минимальный профит для сигнала (0.7%)
+const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.7);
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
@@ -62,24 +46,23 @@ const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 // “Execution window”
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// Slippage haircuts (our own model, applied consistently to ALL venues)
-// (If you want 0.30% total, set 0.15+0.15, etc)
+// Slippage haircuts
 const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.15);
 const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.15);
 
-// Gas model per swap leg (USDC). Total cycle gas = buyGas + sellGas
-// You can tune per chain/venue below if needed; defaults are conservative.
-const GAS_USDC_V2 = Number(process.env.GAS_USDC_V2 || 0.05);     // v2-style routers
-const GAS_USDC_UNI = Number(process.env.GAS_USDC_UNI || 0.05);   // Uniswap v3 quoter
-const GAS_USDC_ODOS = Number(process.env.GAS_USDC_ODOS || 0.05); // Odos
+// Gas model per swap leg (USDC)
+const GAS_USDC_V2 = Number(process.env.GAS_USDC_V2 || 0.05);
+const GAS_USDC_UNI = Number(process.env.GAS_USDC_UNI || 0.05);
+const GAS_USDC_ODOS = Number(process.env.GAS_USDC_ODOS || 0.05);
 
-// Demo behavior: send ONE demo signal message on manual run
+// диапазон поиска лучшего размера
+const MIN_SIZE_USDC = Number(process.env.MIN_SIZE_USDC || 50);
+const MAX_SIZE_USDC = Number(process.env.MAX_SIZE_USDC || 5000);
+
+// Demo behavior
 const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
 // ---------- CHAINS / TOKENS ----------
-// NOTE: Some token addresses differ by chain. For tokens where we cannot safely assume an address,
-// you can override via env (see overrides below). If a token address is missing for a chain, that pair is skipped.
-
 const CHAINS = [
   {
     key: "polygon",
@@ -101,31 +84,26 @@ const CHAINS = [
   }
 ].filter((c) => !!c.rpcUrl);
 
-// Polygon tokens (given)
+// Polygon tokens
 const TOKENS_POLYGON = {
   USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase(), decimals: 6 },
   LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39".toLowerCase(), decimals: 18 },
   WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 },
   WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619".toLowerCase(), decimals: 18 },
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B".toLowerCase(), decimals: 18 },
-  // Added by request (Polygon)
   USDT: { symbol: "USDT", addr: (process.env.POLYGON_USDT || "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.POLYGON_DAI  || "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(), decimals: 18 },
-  // MATIC alias to WMATIC (so you can watch "MATIC" too)
   MATIC: { symbol: "MATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 }
 };
 
-// Base defaults (USDC/WETH are stable; others can be overridden)
 const TOKENS_BASE = {
   USDC: { symbol: "USDC", addr: (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913").toLowerCase(), decimals: 6 },
   WETH: { symbol: "WETH", addr: (process.env.BASE_WETH || "0x4200000000000000000000000000000000000006").toLowerCase(), decimals: 18 },
-  // Optional: set these if you want to watch on Base
   USDT: process.env.BASE_USDT ? { symbol: "USDT", addr: process.env.BASE_USDT.toLowerCase(), decimals: 6 } : null,
   DAI:  process.env.BASE_DAI  ? { symbol: "DAI",  addr: process.env.BASE_DAI.toLowerCase(),  decimals: 18 } : null,
   ARB:  process.env.BASE_ARB  ? { symbol: "ARB",  addr: process.env.BASE_ARB.toLowerCase(),  decimals: 18 } : null
 };
 
-// Arbitrum defaults (common, stable)
 const TOKENS_ARBITRUM = {
   USDC: { symbol: "USDC", addr: (process.env.ARB_USDC || "0xaf88d065e77c8cC2239327C5EDb3A432268e5831").toLowerCase(), decimals: 6 },
   WETH: { symbol: "WETH", addr: (process.env.ARB_WETH || "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(), decimals: 18 },
@@ -134,52 +112,42 @@ const TOKENS_ARBITRUM = {
   ARB:  { symbol: "ARB",  addr: (process.env.ARB_ARB  || "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(), decimals: 18 }
 };
 
-// Token registry per chain
 const TOKENS_BY_CHAIN = {
   polygon: TOKENS_POLYGON,
   base: TOKENS_BASE,
   arbitrum: TOKENS_ARBITRUM
 };
 
-// Watchlist (adds requested pairs on top of existing)
 const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC")
   .split(",")
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
 // ---------- VENUES / ROUTERS / QUOTERS ----------
-// Uniswap V3 QuoterV2 per chain
 const UNI_QUOTER_V2_BY_CHAIN = {
   polygon: (process.env.UNI_QUOTER_V2_POLYGON || process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase(),
   base: (process.env.UNI_QUOTER_V2_BASE || "").toLowerCase(),
   arbitrum: (process.env.UNI_QUOTER_V2_ARBITRUM || process.env.UNI_QUOTER_V2_ARB || "").toLowerCase()
 };
 
-// Uniswap V3 fees to try
 const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// UniswapV2-style router addresses per chain (defaults where safe)
 const ROUTERS_V2_BY_CHAIN = {
   polygon: {
-    // Sushi (given)
     Sushi: (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase(),
-    // QuickSwap v2 router (Polygon)
     QuickSwap: (process.env.QUICKSWAP_ROUTER || "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff").toLowerCase()
   },
   base: {
-    // Aerodrome router MUST be provided. If missing => Aerodrome skipped.
     Aerodrome: (process.env.AERODROME_ROUTER || "").toLowerCase()
   },
   arbitrum: {
-    // Camelot router MUST be provided. If missing => Camelot skipped.
     Camelot: (process.env.CAMELOT_ROUTER || "").toLowerCase()
   }
 };
 
-// Odos quote endpoint (v3 then fallback to v2)
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
 
@@ -251,12 +219,13 @@ function uniswapLink(chainKey, input, output) {
   const chain = chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
   return `https://app.uniswap.org/swap?chain=${chain}&inputCurrency=${input}&outputCurrency=${output}`;
 }
+
+// важная правка: правильные query-параметры для Odos
 function odosLink(chainId, input, output) {
-  // FIX: correct param name is chainId, otherwise Odos игнорит токены и подставляет старую пару
-  return `https://app.odos.xyz/?chainId=${chainId}&tokenIn=${input}&tokenOut=${output}`;
+  return `https://app.odos.xyz/?chainId=${chainId}&inputTokens=${input}&outputTokens=${output}`;
 }
 
-// V2-style router UIs (TrustWallet browser):
+// V2-style router UIs
 function sushiSwapLink(token0, token1) {
   return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
 }
@@ -286,7 +255,7 @@ const uniQuoterV2Abi = [
 function gasForVenue(venue) {
   if (venue === "Uniswap") return GAS_USDC_UNI;
   if (venue === "Odos" || venue === "Curve") return GAS_USDC_ODOS;
-  return GAS_USDC_V2; // v2 routers
+  return GAS_USDC_V2;
 }
 
 function listVenuesForChain(chainKey) {
@@ -313,7 +282,7 @@ async function quoteV2_bestAmountsOut(provider, routerAddr, amountIn, pathCandid
       if (!bestOut || out > bestOut) bestOut = out;
     } catch (_) {}
   }
-  return bestOut; // bigint or null
+  return bestOut;
 }
 
 function v2RouterAddr(chainKey, venue) {
@@ -446,7 +415,7 @@ function haircutBase(amountBase, pctVal) {
 }
 
 function subtractGasBase(stableOutBase, gasStable) {
-  const stableDec = 6; // USDC
+  const stableDec = 6;
   const gasBase = ethers.parseUnits(String(gasStable), stableDec);
   return stableOutBase > gasBase ? stableOutBase - gasBase : 0n;
 }
@@ -476,12 +445,12 @@ function shouldSend(statePair, profitPctVal) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- EMOJI ----------
+// ---------- EMOJI (0.7% порог) ----------
 function emojiForPct(p) {
   if (!Number.isFinite(p)) return "";
   if (p >= 1.5) return "🟢";
   if (p >= 1.3) return "🟠";
-  if (p >= 0.8) return "🔴";
+  if (p >= 0.7) return "🔴";
   return "❌";
 }
 
@@ -502,7 +471,7 @@ function riskLevelFromSamples(statePair) {
   return { level: "HIGH", emoji: "🧨" };
 }
 
-// ---------- EXECUTION WINDOW (реальный) ----------
+// ---------- EXECUTION WINDOW ----------
 function updateWindowStats(statePair, profitPctVal) {
   if (!Number.isFinite(profitPctVal)) return;
   statePair.window = statePair.window || {};
@@ -595,7 +564,7 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
     const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
 
     for (const sellVenue of VENUES) {
-      if (sellVenue === buyVenue) continue; // no same->same
+      if (sellVenue === buyVenue) continue;
 
       let stableOut;
       try {
@@ -624,6 +593,63 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
 
   if (!best) return { pct: NaN, buyVenue: "?", sellVenue: "?", gasTotal: 0 };
   return best;
+}
+
+// доп. поиск лучшего размера вокруг исходного bestPick
+async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
+  if (!basePick || !Number.isFinite(basePick.pct)) return basePick;
+
+  let bestSize = basePick.size;
+  let bestPct = basePick.pct;
+
+  const buyVenue = basePick.buyVenue;
+  const sellVenue = basePick.sellVenue;
+
+  const minSize = Math.max(MIN_SIZE_USDC, bestSize * 0.4);
+  const maxSize = Math.min(MAX_SIZE_USDC, bestSize * 2.5);
+
+  let step = bestSize * 0.25;
+  if (step < 10) step = 10;
+
+  async function profitForSize(size) {
+    try {
+      const tokenOut = await quoteBuy(chain, provider, buyVenue, stable, tokenAddr, size);
+      const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
+      let stableOut = await quoteSell(chain, provider, sellVenue, stable, tokenAddr, tokenOutNet);
+      let stableOutNet = haircutBase(stableOut, SLIPPAGE_SELL_PCT);
+      const gasTotal = gasForVenue(buyVenue) + gasForVenue(sellVenue);
+      stableOutNet = subtractGasBase(stableOutNet, gasTotal);
+      const p = netProfitPct(size, stableOutNet);
+      return p;
+    } catch (_) {
+      return NaN;
+    }
+  }
+
+  for (let i = 0; i < 6; i++) {
+    let improved = false;
+    const candidates = [bestSize];
+    const sMinus = bestSize - step;
+    const sPlus = bestSize + step;
+    if (sMinus >= minSize) candidates.push(sMinus);
+    if (sPlus <= maxSize) candidates.push(sPlus);
+
+    for (const s of candidates) {
+      const p = await profitForSize(s);
+      if (Number.isFinite(p) && p > bestPct) {
+        bestPct = p;
+        bestSize = s;
+        improved = true;
+      }
+    }
+
+    if (!improved) {
+      step = step / 2;
+      if (step < 1) break;
+    }
+  }
+
+  return { ...basePick, size: bestSize, pct: bestPct };
 }
 
 // ---------- MESSAGE BUILDER ----------
@@ -655,8 +681,8 @@ function buildSignalMessage({
     "",
     `🟢 ≥ 1.50%`,
     `🟠 1.30–1.49%`,
-    `🔴 0.80–1.29%`,
-    `❌ below 0.80%`
+    `🔴 0.70–1.29%`,
+    `❌ below 0.70%`
   ].join("\n");
 }
 
@@ -702,7 +728,6 @@ async function sendDemoSignalForChain(provider, chain, sym) {
 
     const em = emojiForPct(r.pct);
     const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
-    // без повторов Buy/Sell на каждой строке
     perSizeLines.push(
       `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
     );
@@ -710,6 +735,15 @@ async function sendDemoSignalForChain(provider, chain, sym) {
     if (Number.isFinite(r.pct) && r.pct > bestAcrossAll) {
       bestAcrossAll = r.pct;
       bestPick = { ...r, size };
+    }
+  }
+
+  if (bestPick) {
+    try {
+      bestPick = await refineBestSize(chain, provider, stable, t.addr, bestPick);
+      bestAcrossAll = bestPick.pct;
+    } catch (e) {
+      console.error("DEMO REFINE ERROR:", chain.key, sym, e?.message || e);
     }
   }
 
@@ -823,7 +857,6 @@ async function main() {
 
         const em = emojiForPct(r.pct);
         const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
-        // без повторов Buy/Sell на каждой строке
         perSizeLines.push(
           `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
         );
@@ -836,7 +869,19 @@ async function main() {
         }
       }
 
-      // Track window stats on primary key
+      // refine best size по лучшему маршруту
+      if (bestPick && Number.isFinite(bestAcrossAll)) {
+        try {
+          bestPick = await refineBestSize(chain, provider, stable, t.addr, bestPick);
+          if (Number.isFinite(bestPick.pct)) {
+            bestAcrossAll = bestPick.pct;
+          }
+        } catch (e) {
+          console.error("REFINE ERROR:", chain.key, sym, e?.message || e);
+        }
+      }
+
+      // Track window stats on primary key (по фактическому лучшему профиту)
       if (Number.isFinite(bestAcrossAll)) {
         pushSample(state.pairs[primaryKey], bestAcrossAll);
         updateWindowStats(state.pairs[primaryKey], bestAcrossAll);
