@@ -32,7 +32,8 @@ const CHAT_IDS = String(CHAT_ID_RAW)
 if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
 
 // ---------- CONFIG ----------
-const SIZES = String(process.env.SIZES || "100,1000,3000")
+// ДОБАВИЛ 5000 В ДЕФОЛТ
+const SIZES = String(process.env.SIZES || "100,1000,3000,5000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
