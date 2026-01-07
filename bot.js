@@ -596,18 +596,20 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
   return best;
 }
 
-// ДОП. ПОИСК ЛУЧШЕГО РАЗМЕРА: ПОЛНЫЙ БРУТ-ФОРС ОТ MIN_SIZE_USDC ДО MAX_SIZE_USDC С ШАГОМ $1
+// доп. поиск лучшего размера вокруг исходного bestPick (лёгкий локальный поиск, без перебора 50–5000)
 async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
   if (!basePick || !Number.isFinite(basePick.pct)) return basePick;
+
+  let bestSize = basePick.size;
+  let bestPct = basePick.pct;
 
   const buyVenue = basePick.buyVenue;
   const sellVenue = basePick.sellVenue;
 
-  const minSize = MIN_SIZE_USDC;
-  const maxSize = MAX_SIZE_USDC;
-
-  let bestSize = basePick.size;
-  let bestPct = basePick.pct;
+  const minSize = Math.max(MIN_SIZE_USDC, bestSize * 0.4);   // не лезем сильно ниже
+  const maxSize = Math.min(MAX_SIZE_USDC, bestSize * 2.5);   // и сильно выше
+  let step = bestSize * 0.25;
+  if (step < 10) step = 10;
 
   async function profitForSize(size) {
     try {
@@ -624,11 +626,26 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
     }
   }
 
-  for (let size = minSize; size <= maxSize; size += 1) {
-    const p = await profitForSize(size);
-    if (Number.isFinite(p) && p > bestPct) {
-      bestPct = p;
-      bestSize = size;
+  for (let i = 0; i < 6; i++) {
+    let improved = false;
+    const candidates = [bestSize];
+    const sMinus = bestSize - step;
+    const sPlus = bestSize + step;
+    if (sMinus >= minSize) candidates.push(sMinus);
+    if (sPlus <= maxSize) candidates.push(sPlus);
+
+    for (const s of candidates) {
+      const p = await profitForSize(s);
+      if (Number.isFinite(p) && p > bestPct) {
+        bestPct = p;
+        bestSize = s;
+        improved = true;
+      }
+    }
+
+    if (!improved) {
+      step = step / 2;
+      if (step < 1) break;
     }
   }
 
