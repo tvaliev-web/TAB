@@ -38,11 +38,22 @@ const SIZES = String(process.env.SIZES || "100,1000,5000")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// минимальный профит для сигнала (0.7%)
-const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.7);
-const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
-const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
-const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
+// режим работы (обычный / агрессивный)
+const MODE = String(process.env.MODE || "normal"); // "normal" | "aggressive"
+
+// минимальный профит для сигнала (по умолчанию 0.4%)
+let MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.4);
+let PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
+let COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
+let BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
+
+if (MODE === "aggressive") {
+  // агрессивные дефолты (можешь перебить ENV’ом)
+  MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.4);
+  PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.1);
+  COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 60);
+  BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 0.3);
+}
 
 // “Execution window”
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
@@ -124,6 +135,9 @@ const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MA
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
+// флаг для возможного отключения агрегаторов (Odos/Curve) через ENV
+const DISABLE_AGGREGATORS = String(process.env.DISABLE_AGGREGATORS || "0") === "1";
+
 // ---------- VENUES / ROUTERS / QUOTERS ----------
 const UNI_QUOTER_V2_BY_CHAIN = {
   polygon: (process.env.UNI_QUOTER_V2_POLYGON || process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase(),
@@ -151,6 +165,9 @@ const ROUTERS_V2_BY_CHAIN = {
 
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
+
+// таймаут для Odos запросов (меньше 25c, чтобы не виснуть)
+const ODOS_TIMEOUT_MS = Number(process.env.ODOS_TIMEOUT_MS || 8000);
 
 // ---------- STATE ----------
 const STATE_PATH = path.join(__dirname, "state.json");
@@ -266,8 +283,11 @@ function listVenuesForChain(chainKey) {
     if (addr && addr !== "0x0000000000000000000000000000000000000000") venues.push(name);
   }
   if (UNI_QUOTER_V2_BY_CHAIN[chainKey]) venues.push("Uniswap");
-  venues.push("Odos");
-  venues.push("Curve");
+  // по умолчанию агрегаторы включены; можно отрубить через DISABLE_AGGREGATORS=1
+  if (!DISABLE_AGGREGATORS) {
+    venues.push("Odos");
+    venues.push("Curve");
+  }
   return venues;
 }
 
@@ -373,10 +393,10 @@ async function quoteOdos(chainId, inputAddr, inputAmountBase, outputAddr) {
 
   let res;
   try {
-    res = await axios.post(ODOS_QUOTE_V3, body, { timeout: 25000 });
+    res = await axios.post(ODOS_QUOTE_V3, body, { timeout: ODOS_TIMEOUT_MS });
   } catch (e) {
     if (e?.response?.status === 404) {
-      res = await axios.post(ODOS_QUOTE_V2, body, { timeout: 25000 });
+      res = await axios.post(ODOS_QUOTE_V2, body, { timeout: ODOS_TIMEOUT_MS });
     } else {
       throw e;
     }
