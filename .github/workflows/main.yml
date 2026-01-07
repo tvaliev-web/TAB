@@ -33,28 +33,53 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          RPC_URL: ${{ secrets.RPC_URL }}
 
+          # RPC для Polygon (обязателен)
+          RPC_URL: ${{ secrets.RPC_URL }}
+          # RPC для Base и Arbitrum (добавь эти секреты, если хочешь, чтобы цепи работали)
+          RPC_URL_BASE: ${{ secrets.RPC_URL_BASE }}
+          RPC_URL_ARBITRUM: ${{ secrets.RPC_URL_ARBITRUM }}
+
+          # старое, не мешает (бот это просто игнорит)
           CHAIN_ID: "137"
 
-          # sizes shown in the message (🟢🟠🔴)
+          # размеры для расчёта (как в боте)
           SIZES: "100,1000,5000"
 
-          # signal rules (your request: min profit 0.7% AFTER costs)
-          MIN_PROFIT_PCT: "0.7"
-          PROFIT_STEP_PCT: "0.10"
-          COOLDOWN_SEC: "60"
+          # МИНИМАЛЬНЫЙ ПРОФИТ ДЛЯ СИГНАЛА (ТВОЁ: 0.4%)
+          MIN_PROFIT_PCT: "0.4"
+
+          # шаг роста профита, чтобы прислать новый сигнал
+          PROFIT_STEP_PCT: "0.20"
+
+          # кулдаун между сигналами по одной паре (сек)
+          COOLDOWN_SEC: "120"
+
+          # если профит подпрыгнул сильно, кулдаун игнорим
           BIG_JUMP_BYPASS: "1.0"
 
-          # after gas + slippage
-          SLIPPAGE_PCT: "0.30"
-          GAS_USDC_CYCLE: "0.25"
+          # слиппедж на buy/sell (бот использует BUY/SELL отдельно)
+          SLIPPAGE_BUY_PCT: "0.15"
+          SLIPPAGE_SELL_PCT: "0.15"
 
-          # window estimate helper
+          # газ в USDC за один свап на разных типах маршрутов
+          GAS_USDC_V2: "0.05"
+          GAS_USDC_UNI: "0.05"
+          GAS_USDC_ODOS: "0.05"
+
+          # диапазон поиска лучшего размера (бот внутри ещё локально докручивает)
+          MIN_SIZE_USDC: "50"
+          MAX_SIZE_USDC: "5000"
+
+          # окно жизни котировки (для текста "Execution window")
           QUOTE_TTL_SEC: "120"
 
-          # demo signal on MANUAL run only
+          # демо-сигнал только при ручном запуске
           SEND_DEMO_ON_MANUAL: "1"
+
+          # какие токены смотреть (как в коде по умолчанию, можно менять строкой)
+          WATCH: "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC"
+
         run: node bot.js
 
       - name: Commit state.json if changed
