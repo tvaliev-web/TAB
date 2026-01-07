@@ -54,7 +54,7 @@ const SIZES = String(process.env.SIZES || "100,1000,3000")
   .filter((x) => Number.isFinite(x) && x > 0);
 
 // Signal tuning
-const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.7); // <<< REQUIRED: 0.7% net (your request)
+const MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.7); // <<< 0.7% net
 const PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 const COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
 const BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
@@ -103,16 +103,16 @@ const CHAINS = [
 
 // Polygon tokens (given)
 const TOKENS_POLYGON = {
-  USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6 },
-  LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39", decimals: 18 },
-  WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", decimals: 18 },
-  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", decimals: 18 },
-  AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 },
+  USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase(), decimals: 6 },
+  LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39".toLowerCase(), decimals: 18 },
+  WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 },
+  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619".toLowerCase(), decimals: 18 },
+  AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B".toLowerCase(), decimals: 18 },
   // Added by request (Polygon)
   USDT: { symbol: "USDT", addr: (process.env.POLYGON_USDT || "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.POLYGON_DAI  || "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(), decimals: 18 },
   // MATIC alias to WMATIC (so you can watch "MATIC" too)
-  MATIC: { symbol: "MATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", decimals: 18 }
+  MATIC: { symbol: "MATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 }
 };
 
 // Base defaults (USDC/WETH are stable; others can be overridden)
@@ -148,7 +148,7 @@ const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MA
   .filter(Boolean);
 
 // ---------- VENUES / ROUTERS / QUOTERS ----------
-// Uniswap V3 QuoterV2 per chain (Polygon default given; other chains optional via env)
+// Uniswap V3 QuoterV2 per chain
 const UNI_QUOTER_V2_BY_CHAIN = {
   polygon: (process.env.UNI_QUOTER_V2_POLYGON || process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase(),
   base: (process.env.UNI_QUOTER_V2_BASE || "").toLowerCase(),
@@ -166,11 +166,11 @@ const ROUTERS_V2_BY_CHAIN = {
   polygon: {
     // Sushi (given)
     Sushi: (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase(),
-    // QuickSwap v2 router (Polygon) - default is widely used; override if you want
+    // QuickSwap v2 router (Polygon)
     QuickSwap: (process.env.QUICKSWAP_ROUTER || "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff").toLowerCase()
   },
   base: {
-    // Aerodrome router MUST be provided (different versions exist). If missing => Aerodrome skipped.
+    // Aerodrome router MUST be provided. If missing => Aerodrome skipped.
     Aerodrome: (process.env.AERODROME_ROUTER || "").toLowerCase()
   },
   arbitrum: {
@@ -248,8 +248,6 @@ function linkA(text, url) {
 
 // ---------- LINKS ----------
 function uniswapLink(chainKey, input, output) {
-  // TrustWallet browser opens this fine; chain param differs, but app handles.
-  // Keeping explicit chain for clarity.
   const chain = chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
   return `https://app.uniswap.org/swap?chain=${chain}&inputCurrency=${input}&outputCurrency=${output}`;
 }
@@ -257,7 +255,7 @@ function odosLink(chainId, input, output) {
   return `https://app.odos.xyz/?chain=${chainId}&tokenIn=${input}&tokenOut=${output}`;
 }
 
-// V2-style router UIs (simple, used for TrustWallet browser):
+// V2-style router UIs (TrustWallet browser):
 function sushiSwapLink(token0, token1) {
   return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
 }
@@ -265,11 +263,9 @@ function quickSwapLink(token0, token1) {
   return `https://quickswap.exchange/#/swap?currency0=${token0}&currency1=${token1}`;
 }
 function aerodromeLink(token0, token1) {
-  // Aerodrome UI (Base)
   return `https://aerodrome.finance/swap?from=${token0}&to=${token1}`;
 }
 function camelotLink(token0, token1) {
-  // Camelot UI (Arbitrum)
   return `https://app.camelot.exchange/?inputCurrency=${token0}&outputCurrency=${token1}`;
 }
 function curveLink(chainKey, token0, token1) {
@@ -287,10 +283,9 @@ const uniQuoterV2Abi = [
 ];
 
 function gasForVenue(venue) {
-  // Keep simple: v3 / Odos / v2
   if (venue === "Uniswap") return GAS_USDC_UNI;
-  if (venue === "Odos") return GAS_USDC_ODOS;
-  return GAS_USDC_V2;
+  if (venue === "Odos" || venue === "Curve") return GAS_USDC_ODOS;
+  return GAS_USDC_V2; // v2 routers
 }
 
 function listVenuesForChain(chainKey) {
@@ -299,11 +294,8 @@ function listVenuesForChain(chainKey) {
   for (const [name, addr] of Object.entries(v2)) {
     if (addr && addr !== "0x0000000000000000000000000000000000000000") venues.push(name);
   }
-  // Uniswap V3 only if quoter provided
   if (UNI_QUOTER_V2_BY_CHAIN[chainKey]) venues.push("Uniswap");
-  // Odos always
   venues.push("Odos");
-  // Curve link requested (UI); pricing may route via Odos too, but we keep a venue label for UI clarity
   venues.push("Curve");
   return venues;
 }
@@ -328,7 +320,7 @@ function v2RouterAddr(chainKey, venue) {
   return (m[venue] || "").toLowerCase();
 }
 
-// BUY on V2: USDC -> TOKEN (best path)
+// BUY on V2: USDC -> TOKEN
 async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, tokenAddr, stableAmount) {
   const routerAddr = v2RouterAddr(chainKey, venue);
   if (!routerAddr) throw new Error("V2 router missing for venue");
@@ -336,7 +328,6 @@ async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, t
   const amountIn = ethers.parseUnits(String(stableAmount), stable.decimals);
   const t = TOKENS_BY_CHAIN[chainKey];
 
-  // Candidate paths: direct + via WETH + (Polygon via WMATIC)
   const candidates = [
     [stable.addr, tokenAddr],
     t.WETH ? [stable.addr, t.WETH.addr, tokenAddr] : null,
@@ -348,7 +339,7 @@ async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, t
   return out;
 }
 
-// SELL on V2: TOKEN -> USDC (best path)
+// SELL on V2: TOKEN -> USDC
 async function quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, tokenAddr, tokenAmountIn) {
   const routerAddr = v2RouterAddr(chainKey, venue);
   if (!routerAddr) throw new Error("V2 router missing for venue");
@@ -362,10 +353,10 @@ async function quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, t
 
   const out = await quoteV2_bestAmountsOut(provider, routerAddr, tokenAmountIn, candidates);
   if (!out) throw new Error("V2 SELL quote failed (all paths)");
-  return out; // stable base units
+  return out;
 }
 
-// Uniswap V3: exact input single for both directions
+// Uniswap V3: exact input single
 async function quoteUniV3_bestExactIn(provider, chainKey, tokenIn, tokenOut, amountIn) {
   const quoterAddr = UNI_QUOTER_V2_BY_CHAIN[chainKey];
   if (!quoterAddr) return null;
@@ -381,30 +372,29 @@ async function quoteUniV3_bestExactIn(provider, chainKey, tokenIn, tokenOut, amo
       if (!best || amountOut > best.amountOut) best = { amountOut, fee };
     } catch (_) {}
   }
-  return best; // {amountOut, fee} or null
+  return best;
 }
 
 async function quoteUni_STABLE_to_TOKEN_best(provider, chainKey, stable, tokenAddr, stableAmount) {
   const amountIn = ethers.parseUnits(String(stableAmount), stable.decimals);
   const best = await quoteUniV3_bestExactIn(provider, chainKey, stable.addr, tokenAddr, amountIn);
   if (!best) throw new Error("Uniswap BUY quote failed (no pool/fee)");
-  return best.amountOut; // token base units
+  return best.amountOut;
 }
 
 async function quoteUni_TOKEN_to_STABLE_best(provider, chainKey, stable, tokenAddr, tokenAmountIn) {
   const best = await quoteUniV3_bestExactIn(provider, chainKey, tokenAddr, stable.addr, tokenAmountIn);
   if (!best) throw new Error("Uniswap SELL quote failed (no pool/fee)");
-  return best.amountOut; // stable base units
+  return best.amountOut;
 }
 
-// Odos quote: generic (inputTokens -> outputTokens)
+// Odos quote
 async function quoteOdos(chainId, inputAddr, inputAmountBase, outputAddr) {
   const body = {
     chainId,
     inputTokens: [{ tokenAddress: inputAddr, amount: inputAmountBase.toString() }],
     outputTokens: [{ tokenAddress: outputAddr, proportion: 1 }],
     userAddr: "0x0000000000000000000000000000000000000001",
-    // keep it >= our model so route exists; we still apply our own haircuts consistently
     slippageLimitPercent: Number(Math.max(SLIPPAGE_BUY_PCT, SLIPPAGE_SELL_PCT, 0.1)),
     disableRFQs: true,
     compact: true
@@ -435,8 +425,7 @@ async function quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenAmountIn
   return await quoteOdos(chain.chainId, tokenAddr, tokenAmountIn, stable.addr);
 }
 
-// "Curve venue": for quoting we use Odos (since Odos can route through Curve pools);
-// but we keep a separate UI link in the message.
+// "Curve venue": pricing через Odos, UI — Curve
 async function quoteCurve_STABLE_to_TOKEN(chain, stable, tokenAddr, stableAmount) {
   return await quoteOdos_STABLE_to_TOKEN(chain, stable, tokenAddr, stableAmount);
 }
@@ -444,9 +433,9 @@ async function quoteCurve_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenAmountI
   return await quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenAmountIn);
 }
 
-// ---------- COSTS / PROFIT (BASE UNITS) ----------
+// ---------- COSTS / PROFIT ----------
 function bpsFromPct(pctVal) {
-  return Math.max(0, Math.round(Number(pctVal) * 100)); // 0.15% => 15 bps
+  return Math.max(0, Math.round(Number(pctVal) * 100));
 }
 
 function haircutBase(amountBase, pctVal) {
@@ -456,7 +445,7 @@ function haircutBase(amountBase, pctVal) {
 }
 
 function subtractGasBase(stableOutBase, gasStable) {
-  const stableDec = 6; // stable is USDC everywhere here; base units
+  const stableDec = 6; // USDC
   const gasBase = ethers.parseUnits(String(gasStable), stableDec);
   return stableOutBase > gasBase ? stableOutBase - gasBase : 0n;
 }
@@ -473,6 +462,7 @@ function shouldSend(statePair, profitPctVal) {
   const lastSentAt = statePair?.lastSentAt || 0;
   const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
+  if (!Number.isFinite(profitPctVal)) return { ok: false, reason: "nan" };
   if (profitPctVal < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
   const since = now - lastSentAt;
@@ -490,7 +480,7 @@ function emojiForPct(p) {
   if (!Number.isFinite(p)) return "";
   if (p >= 1.5) return "🟢";
   if (p >= 1.3) return "🟠";
-  if (p >= 0.8) return "🔴"; // legacy bands
+  if (p >= 0.8) return "🔴";
   return "❌";
 }
 
@@ -500,33 +490,30 @@ function riskLevelFromSamples(statePair) {
   if (s.length < 2) return { level: "MED", emoji: "⚠️" };
 
   const lastP = s[s.length - 1].p;
-  if (Number.isFinite(lastP) && lastP < 0) return { level: "HIGH", emoji: "🧨" }; // losses => HIGH
+  if (Number.isFinite(lastP) && lastP < 0) return { level: "HIGH", emoji: "🧨" };
 
   const a = s[s.length - 1].p;
   const b = s[s.length - 2].p;
   const delta = Math.abs(a - b);
 
-  // tighter => lower risk
   if (delta <= 0.15) return { level: "LOW", emoji: "✅" };
   if (delta <= 0.40) return { level: "MED", emoji: "⚠️" };
   return { level: "HIGH", emoji: "🧨" };
 }
 
-// ---------- EXECUTION WINDOW ----------
+// ---------- EXECUTION WINDOW (реальный) ----------
 function updateWindowStats(statePair, profitPctVal) {
   if (!Number.isFinite(profitPctVal)) return;
   statePair.window = statePair.window || {};
   const w = statePair.window;
   const now = nowSec();
 
-  // Track how long BEST profit stays >= MIN_PROFIT_PCT (based on actual bot sampling cadence).
   if (profitPctVal >= MIN_PROFIT_PCT) {
     if (!w.aboveSince) w.aboveSince = now;
     w.lastAboveAt = now;
     return;
   }
 
-  // If we just dropped below threshold, close the last window and store its duration.
   if (w.aboveSince) {
     const end = w.lastAboveAt || now;
     const dur = Math.max(0, end - w.aboveSince);
@@ -542,7 +529,6 @@ function estimateWindowText(statePair) {
   const w = statePair?.window || {};
   const hist = Array.isArray(w.hist) ? w.hist : [];
 
-  // Typical window length = median of recent observed windows (seconds).
   let typicalSec = QUOTE_TTL_SEC;
   if (hist.length) {
     const s = [...hist].sort((a, b) => a - b);
@@ -551,20 +537,17 @@ function estimateWindowText(statePair) {
   }
 
   const fmt = (sec) => {
-    if (!Number.isFinite(sec) || sec <= 0) return "~0 min";
+    if (!Number.isFinite(sec) || sec <= 0) return "~0 sec";
     if (sec < 90) return `${Math.max(1, Math.round(sec))} sec`;
     return `~${Math.max(1, Math.round(sec / 60))} min`;
   };
 
-  // If currently above threshold, estimate remaining time based on typical window - elapsed.
   if (w.aboveSince) {
     const elapsed = nowSec() - w.aboveSince;
     const remaining = Math.max(0, typicalSec - elapsed);
-    // Keep it honest: this is an estimate from history, not a guarantee.
     return `${fmt(remaining)} left (est.)`;
   }
 
-  // Not currently in a profitable window: show typical observed duration (or TTL fallback).
   return `typical ${fmt(typicalSec)}`;
 }
 
@@ -581,7 +564,6 @@ async function quoteBuy(chain, provider, venue, stable, tokenAddr, stableIn) {
   if (venue === "Uniswap") return await quoteUni_STABLE_to_TOKEN_best(provider, chainKey, stable, tokenAddr, stableIn);
   if (venue === "Odos") return await quoteOdos_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
   if (venue === "Curve") return await quoteCurve_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
-  // v2-style routers
   return await quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, tokenAddr, stableIn);
 }
 
@@ -590,7 +572,6 @@ async function quoteSell(chain, provider, venue, stable, tokenAddr, tokenInBase)
   if (venue === "Uniswap") return await quoteUni_TOKEN_to_STABLE_best(provider, chainKey, stable, tokenAddr, tokenInBase);
   if (venue === "Odos") return await quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
   if (venue === "Curve") return await quoteCurve_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
-  // v2-style routers
   return await quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, tokenAddr, tokenInBase);
 }
 
@@ -599,8 +580,7 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
   let best = null;
   const chainKey = chain.key;
   const t = TOKENS_BY_CHAIN[chainKey];
-  const stable = t.USDC; // stable base is USDC on all chains here
-
+  const stable = t.USDC;
   const VENUES = listVenuesForChain(chainKey);
 
   for (const buyVenue of VENUES) {
@@ -611,23 +591,20 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
       continue;
     }
 
-    // apply BUY slippage haircut on tokenOut
     const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
 
     for (const sellVenue of VENUES) {
       if (sellVenue === buyVenue) continue; // no same->same
 
       let stableOut;
-    try {
+      try {
         stableOut = await quoteSell(chain, provider, sellVenue, stable, tokenAddr, tokenOutNet);
-    } catch (_) {
+      } catch (_) {
         continue;
-    }
+      }
 
-      // apply SELL slippage haircut on stable out
       let stableOutNet = haircutBase(stableOut, SLIPPAGE_SELL_PCT);
 
-      // subtract gas for both legs
       const gasTotal = gasForVenue(buyVenue) + gasForVenue(sellVenue);
       stableOutNet = subtractGasBase(stableOutNet, gasTotal);
 
@@ -640,7 +617,7 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
           sellVenue,
           gasTotal
         };
-    }
+      }
     }
   }
 
@@ -653,6 +630,7 @@ function buildSignalMessage({
   chain,
   sym,
   bestRouteHtml,
+  bestSizeText,
   perSizeLines,
   windowText,
   riskText,
@@ -666,6 +644,7 @@ function buildSignalMessage({
     title,
     "",
     `Best route: <b>${bestRouteHtml}</b>`,
+    `Best size (max profit): <b>${escapeHtml(bestSizeText)}</b>`,
     "",
     `💰 <b>Net profit (after slippage + gas)</b>`,
     ...perSizeLines,
@@ -685,7 +664,6 @@ function venueSwapLink(chainKey, chainId, venue, tokenIn, tokenOut) {
   if (venue === "Odos") return linkA("Odos", odosLink(chainId, tokenIn, tokenOut));
   if (venue === "Curve") return linkA("Curve", curveLink(chainKey, tokenIn, tokenOut));
 
-  // v2 UIs
   if (chainKey === "polygon") {
     if (venue === "Sushi") return linkA("SushiSwap", sushiSwapLink(tokenIn, tokenOut));
     if (venue === "QuickSwap") return linkA("QuickSwap", quickSwapLink(tokenIn, tokenOut));
@@ -697,13 +675,13 @@ function venueSwapLink(chainKey, chainId, venue, tokenIn, tokenOut) {
     if (venue === "Camelot") return linkA("Camelot", camelotLink(tokenIn, tokenOut));
   }
 
-  // fallback
   return linkA(venue, uniswapLink(chainKey, tokenIn, tokenOut));
 }
 
-function bestRouteLinkHtml(chainKey, buyVenue, sellVenue, stableAddr, tokenAddr) {
-  const buyLink = venueSwapLink(chainKey, buyVenue, stableAddr, tokenAddr, true);
-  const sellLink = venueSwapLink(chainKey, sellVenue, tokenAddr, stableAddr, false);
+function bestRouteLinkHtml(chain, buyVenue, sellVenue, stableAddr, tokenAddr) {
+  const chainKey = chain.key;
+  const buyLink = venueSwapLink(chainKey, chain.chainId, buyVenue, stableAddr, tokenAddr);
+  const sellLink = venueSwapLink(chainKey, chain.chainId, sellVenue, tokenAddr, stableAddr);
   return `${buyLink} → ${sellLink}`;
 }
 
@@ -711,7 +689,8 @@ function bestRouteLinkHtml(chainKey, buyVenue, sellVenue, stableAddr, tokenAddr)
 async function sendDemoSignalForChain(provider, chain, sym) {
   const tAll = TOKENS_BY_CHAIN[chain.key] || {};
   const t = tAll[sym];
-  if (!t || !tAll.USDC) return;
+  const stable = tAll.USDC;
+  if (!t || !stable) return;
 
   const perSizeLines = [];
   let bestAcrossAll = -999;
@@ -733,8 +712,12 @@ async function sendDemoSignalForChain(provider, chain, sym) {
   }
 
   const bestRouteHtml = bestPick
-    ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, t.addr)
+    ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, stable.addr, t.addr)
     : escapeHtml("n/a");
+
+  const bestSizeText = bestPick
+    ? `$${bestPick.size.toFixed(2)} USDC`
+    : "n/a";
 
   const riskText =
     Number.isFinite(bestAcrossAll) && bestAcrossAll < 0
@@ -745,6 +728,7 @@ async function sendDemoSignalForChain(provider, chain, sym) {
     chain,
     sym,
     bestRouteHtml,
+    bestSizeText,
     perSizeLines,
     windowText: "2–5 minutes",
     riskText,
@@ -774,21 +758,21 @@ async function main() {
       if (rpcChain !== chain.chainId) {
         console.error(`RPC CHAIN_ID MISMATCH (${chain.key}): RPC=${rpcChain} EXPECTED=${chain.chainId} (fix RPC_URL_*)`);
         continue;
-    }
+      }
     } catch (e) {
       console.error(`NETWORK CHECK FAILED (${chain.key}):`, e?.message || e);
       continue;
     }
 
     const tAll = TOKENS_BY_CHAIN[chain.key] || {};
-    if (!tAll.USDC) continue;
+    const stable = tAll.USDC;
+    if (!stable) continue;
 
-    // Demo only ONCE per manual workflow run (per chain)
+    // Demo once per manual run per chain
     if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
       const tagKey = `demoSentTag:${chain.key}`;
       if (state.meta[tagKey] !== demoTag) {
         try {
-          // demo uses LINK if present, else WETH, else first watched token available
           let demoSym = tAll.LINK ? "LINK" : tAll.WETH ? "WETH" : null;
           if (!demoSym) {
             for (const s of WATCH) {
@@ -807,7 +791,7 @@ async function main() {
         } catch (e) {
           console.error("DEMO ERROR:", chain.key, e?.response?.status, e?.response?.data || e?.message || e);
         }
-    }
+      }
     }
 
     for (const sym of WATCH) {
@@ -847,40 +831,44 @@ async function main() {
           bestAcrossAll = r.pct;
           bestPick = { ...r, size };
         }
-    }
+      }
 
-  
-    // Track window stats on the primary key (bestAcrossAll across sizes)
-    if (Number.isFinite(bestAcrossAll)) {
-      pushSample(state.pairs[primaryKey], bestAcrossAll);
-      updateWindowStats(state.pairs[primaryKey], bestAcrossAll);
-    }
+      // Track window stats on primary key
+      if (Number.isFinite(bestAcrossAll)) {
+        pushSample(state.pairs[primaryKey], bestAcrossAll);
+        updateWindowStats(state.pairs[primaryKey], bestAcrossAll);
+      }
 
-    const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
-    if (!decision.ok) {
-      writeState(state);
-      continue;
-    }
+      const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
+      if (!decision.ok) {
+        writeState(state);
+        continue;
+      }
 
-    const bestRouteHtml = bestPick
-        ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, t.addr)
+      const bestRouteHtml = bestPick
+        ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, stable.addr, t.addr)
         : escapeHtml("n/a");
 
-    const windowText = estimateWindowText(state.pairs[primaryKey]);
-    const risk = riskLevelFromSamples(state.pairs[primaryKey]);
-    const riskText = `${risk.emoji} <b>Risk:</b> ${risk.level}`;
+      const bestSizeText = bestPick
+        ? `$${bestPick.size.toFixed(2)} USDC`
+        : "n/a";
 
-    const msg = buildSignalMessage({
+      const windowText = estimateWindowText(state.pairs[primaryKey]);
+      const risk = riskLevelFromSamples(state.pairs[primaryKey]);
+      const riskText = `${risk.emoji} <b>Risk:</b> ${risk.level}`;
+
+      const msg = buildSignalMessage({
         chain,
         sym,
         bestRouteHtml,
+        bestSizeText,
         perSizeLines,
         windowText,
         riskText,
         isTest: false
-    });
+      });
 
-    try {
+      try {
         await tgBroadcast(msg);
 
         const ts = nowSec();
@@ -890,9 +878,9 @@ async function main() {
         state.meta.lastAnySentAt = ts;
 
         writeState(state);
-    } catch (e) {
+      } catch (e) {
         console.error("TELEGRAM ERROR:", e?.response?.data || e?.message || e);
-    }
+      }
     }
   }
 }
