@@ -32,8 +32,8 @@ const CHAT_IDS = String(CHAT_ID_RAW)
 if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
 
 // ---------- CONFIG ----------
-// ДОБАВИЛ 5000 В ДЕФОЛТ
-const SIZES = String(process.env.SIZES || "100,1000,3000,5000")
+// фиксированные объёмы: 100, 1000, 5000
+const SIZES = String(process.env.SIZES || "100,1000,5000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
@@ -596,21 +596,18 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
   return best;
 }
 
-// доп. поиск лучшего размера вокруг исходного bestPick
+// ДОП. ПОИСК ЛУЧШЕГО РАЗМЕРА: ПОЛНЫЙ БРУТ-ФОРС ОТ MIN_SIZE_USDC ДО MAX_SIZE_USDC С ШАГОМ $1
 async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
   if (!basePick || !Number.isFinite(basePick.pct)) return basePick;
-
-  let bestSize = basePick.size;
-  let bestPct = basePick.pct;
 
   const buyVenue = basePick.buyVenue;
   const sellVenue = basePick.sellVenue;
 
-  const minSize = Math.max(MIN_SIZE_USDC, bestSize * 0.4);
-  const maxSize = Math.min(MAX_SIZE_USDC, bestSize * 2.5);
+  const minSize = MIN_SIZE_USDC;
+  const maxSize = MAX_SIZE_USDC;
 
-  let step = bestSize * 0.25;
-  if (step < 10) step = 10;
+  let bestSize = basePick.size;
+  let bestPct = basePick.pct;
 
   async function profitForSize(size) {
     try {
@@ -627,26 +624,11 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
     }
   }
 
-  for (let i = 0; i < 6; i++) {
-    let improved = false;
-    const candidates = [bestSize];
-    const sMinus = bestSize - step;
-    const sPlus = bestSize + step;
-    if (sMinus >= minSize) candidates.push(sMinus);
-    if (sPlus <= maxSize) candidates.push(sPlus);
-
-    for (const s of candidates) {
-      const p = await profitForSize(s);
-      if (Number.isFinite(p) && p > bestPct) {
-        bestPct = p;
-        bestSize = s;
-        improved = true;
-      }
-    }
-
-    if (!improved) {
-      step = step / 2;
-      if (step < 1) break;
+  for (let size = minSize; size <= maxSize; size += 1) {
+    const p = await profitForSize(size);
+    if (Number.isFinite(p) && p > bestPct) {
+      bestPct = p;
+      bestSize = size;
     }
   }
 
