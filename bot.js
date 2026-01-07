@@ -252,7 +252,8 @@ function uniswapLink(chainKey, input, output) {
   return `https://app.uniswap.org/swap?chain=${chain}&inputCurrency=${input}&outputCurrency=${output}`;
 }
 function odosLink(chainId, input, output) {
-  return `https://app.odos.xyz/?chain=${chainId}&tokenIn=${input}&tokenOut=${output}`;
+  // FIX: correct param name is chainId, otherwise Odos игнорит токены и подставляет старую пару
+  return `https://app.odos.xyz/?chainId=${chainId}&tokenIn=${input}&tokenOut=${output}`;
 }
 
 // V2-style router UIs (TrustWallet browser):
@@ -701,8 +702,9 @@ async function sendDemoSignalForChain(provider, chain, sym) {
 
     const em = emojiForPct(r.pct);
     const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
+    // без повторов Buy/Sell на каждой строке
     perSizeLines.push(
-      `${em} <b>$${size} USDC input</b> → <b>${pStr}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+      `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
     );
 
     if (Number.isFinite(r.pct) && r.pct > bestAcrossAll) {
@@ -815,14 +817,15 @@ async function main() {
           r = await bestRouteForSize(chain, provider, sym, t.addr, size);
         } catch (e) {
           console.error(sym, "ROUTE ERROR:", chain.key, size, e?.message || e);
-          perSizeLines.push(`❌ <b>$${size} USDC input</b> → <b>—</b> | Buy: <b>?</b> → Sell: <b>?</b>`);
+          perSizeLines.push(`❌ <b>$${size} USDC input</b> → <b>—</b>`);
           continue;
         }
 
         const em = emojiForPct(r.pct);
         const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
+        // без повторов Buy/Sell на каждой строке
         perSizeLines.push(
-          `${em} <b>$${size} USDC input</b> → <b>${pStr}</b> | Buy: <b>${r.buyVenue}</b> → Sell: <b>${r.sellVenue}</b>`
+          `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
         );
 
         if (Number.isFinite(r.pct)) pushSample(state.pairs[sizeKey], r.pct);
