@@ -513,19 +513,59 @@ function riskLevelFromSamples(statePair) {
 }
 
 // ---------- EXECUTION WINDOW ----------
-function estimateWindowText(statePair) {
-  const s = Array.isArray(statePair?.samples) ? statePair.samples : [];
-  if (s.length >= 2) {
-    const a = s[s.length - 1].p;
-    const b = s[s.length - 2].p;
-    const delta = Math.abs(a - b);
-    if (delta < 0.20) return "2–6 minutes";
-    if (delta < 0.50) return "1–4 minutes";
-    return "30–120 seconds";
+function updateWindowStats(statePair, profitPctVal) {
+  if (!Number.isFinite(profitPctVal)) return;
+  statePair.window = statePair.window || {};
+  const w = statePair.window;
+  const now = nowSec();
+
+  // Track how long BEST profit stays >= MIN_PROFIT_PCT (based on actual bot sampling cadence).
+  if (profitPctVal >= MIN_PROFIT_PCT) {
+    if (!w.aboveSince) w.aboveSince = now;
+    w.lastAboveAt = now;
+    return;
   }
-  if (QUOTE_TTL_SEC >= 240) return "2–6 minutes";
-  if (QUOTE_TTL_SEC >= 120) return "1–4 minutes";
-  return "~1–2 minutes";
+
+  // If we just dropped below threshold, close the last window and store its duration.
+  if (w.aboveSince) {
+    const end = w.lastAboveAt || now;
+    const dur = Math.max(0, end - w.aboveSince);
+    w.hist = Array.isArray(w.hist) ? w.hist : [];
+    if (dur > 0) w.hist.push(dur);
+    if (w.hist.length > 30) w.hist = w.hist.slice(-30);
+    w.aboveSince = 0;
+    w.lastAboveAt = 0;
+  }
+}
+
+function estimateWindowText(statePair) {
+  const w = statePair?.window || {};
+  const hist = Array.isArray(w.hist) ? w.hist : [];
+
+  // Typical window length = median of recent observed windows (seconds).
+  let typicalSec = QUOTE_TTL_SEC;
+  if (hist.length) {
+    const s = [...hist].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    typicalSec = s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+  }
+
+  const fmt = (sec) => {
+    if (!Number.isFinite(sec) || sec <= 0) return "~0 min";
+    if (sec < 90) return `${Math.max(1, Math.round(sec))} sec`;
+    return `~${Math.max(1, Math.round(sec / 60))} min`;
+  };
+
+  // If currently above threshold, estimate remaining time based on typical window - elapsed.
+  if (w.aboveSince) {
+    const elapsed = nowSec() - w.aboveSince;
+    const remaining = Math.max(0, typicalSec - elapsed);
+    // Keep it honest: this is an estimate from history, not a guarantee.
+    return `${fmt(remaining)} left (est.)`;
+  }
+
+  // Not currently in a profitable window: show typical observed duration (or TTL fallback).
+  return `typical ${fmt(typicalSec)}`;
 }
 
 function pushSample(statePair, profitPctVal) {
@@ -578,11 +618,11 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
       if (sellVenue === buyVenue) continue; // no same->same
 
       let stableOut;
-      try {
+    try {
         stableOut = await quoteSell(chain, provider, sellVenue, stable, tokenAddr, tokenOutNet);
-      } catch (_) {
+    } catch (_) {
         continue;
-      }
+    }
 
       // apply SELL slippage haircut on stable out
       let stableOutNet = haircutBase(stableOut, SLIPPAGE_SELL_PCT);
@@ -600,7 +640,7 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
           sellVenue,
           gasTotal
         };
-      }
+    }
     }
   }
 
@@ -661,16 +701,10 @@ function venueSwapLink(chainKey, chainId, venue, tokenIn, tokenOut) {
   return linkA(venue, uniswapLink(chainKey, tokenIn, tokenOut));
 }
 
-function bestRouteLinkHtml(chain, buyVenue, sellVenue, tokenAddr) {
-  const t = TOKENS_BY_CHAIN[chain.key];
-  const text = `${buyVenue} → ${sellVenue}`;
-
-  // Link points to the BUY venue swap page (USDC -> TOKEN)
-  const buyLink = venueSwapLink(chain.key, chain.chainId, buyVenue, t.USDC.addr, tokenAddr);
-  // Add SELL link inline (so user has both in the route line, no extra Buy/Sell lines)
-  const sellLink = venueSwapLink(chain.key, chain.chainId, sellVenue, tokenAddr, t.USDC.addr);
-
-  return `${escapeHtml(text)} | Buy: ${buyLink} | Sell: ${sellLink}`;
+function bestRouteLinkHtml(chainKey, buyVenue, sellVenue, stableAddr, tokenAddr) {
+  const buyLink = venueSwapLink(chainKey, buyVenue, stableAddr, tokenAddr, true);
+  const sellLink = venueSwapLink(chainKey, sellVenue, tokenAddr, stableAddr, false);
+  return `${buyLink} → ${sellLink}`;
 }
 
 // ---------- DEMO ----------
@@ -740,7 +774,7 @@ async function main() {
       if (rpcChain !== chain.chainId) {
         console.error(`RPC CHAIN_ID MISMATCH (${chain.key}): RPC=${rpcChain} EXPECTED=${chain.chainId} (fix RPC_URL_*)`);
         continue;
-      }
+    }
     } catch (e) {
       console.error(`NETWORK CHECK FAILED (${chain.key}):`, e?.message || e);
       continue;
@@ -773,7 +807,7 @@ async function main() {
         } catch (e) {
           console.error("DEMO ERROR:", chain.key, e?.response?.status, e?.response?.data || e?.message || e);
         }
-      }
+    }
     }
 
     for (const sym of WATCH) {
@@ -813,23 +847,30 @@ async function main() {
           bestAcrossAll = r.pct;
           bestPick = { ...r, size };
         }
-      }
+    }
 
-      const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
-      if (!decision.ok) {
-        writeState(state);
-        continue;
-      }
+  
+    // Track window stats on the primary key (bestAcrossAll across sizes)
+    if (Number.isFinite(bestAcrossAll)) {
+      pushSample(state.pairs[primaryKey], bestAcrossAll);
+      updateWindowStats(state.pairs[primaryKey], bestAcrossAll);
+    }
 
-      const bestRouteHtml = bestPick
+    const decision = shouldSend(state.pairs[primaryKey], bestAcrossAll);
+    if (!decision.ok) {
+      writeState(state);
+      continue;
+    }
+
+    const bestRouteHtml = bestPick
         ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, t.addr)
         : escapeHtml("n/a");
 
-      const windowText = estimateWindowText(state.pairs[primaryKey]);
-      const risk = riskLevelFromSamples(state.pairs[primaryKey]);
-      const riskText = `${risk.emoji} <b>Risk:</b> ${risk.level}`;
+    const windowText = estimateWindowText(state.pairs[primaryKey]);
+    const risk = riskLevelFromSamples(state.pairs[primaryKey]);
+    const riskText = `${risk.emoji} <b>Risk:</b> ${risk.level}`;
 
-      const msg = buildSignalMessage({
+    const msg = buildSignalMessage({
         chain,
         sym,
         bestRouteHtml,
@@ -837,9 +878,9 @@ async function main() {
         windowText,
         riskText,
         isTest: false
-      });
+    });
 
-      try {
+    try {
         await tgBroadcast(msg);
 
         const ts = nowSec();
@@ -849,9 +890,9 @@ async function main() {
         state.meta.lastAnySentAt = ts;
 
         writeState(state);
-      } catch (e) {
+    } catch (e) {
         console.error("TELEGRAM ERROR:", e?.response?.data || e?.message || e);
-      }
+    }
     }
   }
 }
