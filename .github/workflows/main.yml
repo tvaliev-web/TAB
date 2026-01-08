@@ -95,6 +95,7 @@ jobs:
           BASE_USDT: ${{ secrets.BASE_USDT }}
           BASE_WETH: ${{ secrets.BASE_WETH }}
           BASE_ARB:  ${{ secrets.BASE_ARB }}
+          BASE_DAI: ${{ secrets.BASE_DAI }}
 
           ARB_USDC: ${{ secrets.ARB_USDC }}
           ARB_USDT: ${{ secrets.ARB_USDT }}
