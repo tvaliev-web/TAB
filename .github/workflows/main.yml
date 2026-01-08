@@ -87,6 +87,8 @@ jobs:
           CAMELOT_ROUTER: ${{ secrets.CAMELOT_ROUTER }}
 
           UNI_QUOTER_V2_POLYGON: ${{ secrets.UNI_QUOTER_V2_POLYGON }}
+          UNI_QUOTER_V2_BASE: ${{ secrets.UNI_QUOTER_V2_BASE }}
+          UNI_QUOTER_V2_ARBITRUM: ${{ secrets.UNI_QUOTER_V2_ARBITRUM }}
 
           POLYGON_USDT: ${{ secrets.POLYGON_USDT }}
           POLYGON_DAI: ${{ secrets.POLYGON_DAI }}
