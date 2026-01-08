@@ -826,6 +826,7 @@ async function main() {
 
     // Demo once per manual run per chain
     if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
+      if (chain.key !== "polygon") continue; // тест только для Polygon
       const tagKey = `demoSentTag:${chain.key}`;
       if (state.meta[tagKey] !== demoTag) {
         try {
