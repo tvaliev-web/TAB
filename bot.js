@@ -101,10 +101,21 @@ const TOKENS_POLYGON = {
   USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase(), decimals: 6 },
   LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39".toLowerCase(), decimals: 18 },
   WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 },
-  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619".toLowerCase(), decimals: 18 },
+  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cF1b9f619".toLowerCase(), decimals: 18 },
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B".toLowerCase(), decimals: 18 },
   USDT: { symbol: "USDT", addr: (process.env.POLYGON_USDT || "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.POLYGON_DAI  || "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(), decimals: 18 },
+
+  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Polygon)
+  WBTC:  { symbol: "WBTC",  addr: (process.env.POLYGON_WBTC  || "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6").toLowerCase(), decimals: 8 },
+  UNI:   { symbol: "UNI",   addr: (process.env.POLYGON_UNI   || "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(), decimals: 18 },
+  CRV:   { symbol: "CRV",   addr: (process.env.POLYGON_CRV   || "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(), decimals: 18 },
+  SNX:   { symbol: "SNX",   addr: (process.env.POLYGON_SNX   || "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(), decimals: 18 },
+  BAL:   { symbol: "BAL",   addr: (process.env.POLYGON_BAL   || "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(), decimals: 18 },
+  COMP:  { symbol: "COMP",  addr: (process.env.POLYGON_COMP  || "0x8505b9d2254a7ae468c0e9dd10ccea3a837aef5c").toLowerCase(), decimals: 18 },
+  MKR:   { symbol: "MKR",   addr: (process.env.POLYGON_MKR   || "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(), decimals: 18 },
+  SUSHI: { symbol: "SUSHI", addr: (process.env.POLYGON_SUSHI || "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(), decimals: 18 },
+
   MATIC: { symbol: "MATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 }
 };
 
@@ -121,7 +132,11 @@ const TOKENS_ARBITRUM = {
   WETH: { symbol: "WETH", addr: (process.env.ARB_WETH || "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(), decimals: 18 },
   USDT: { symbol: "USDT", addr: (process.env.ARB_USDT || "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.ARB_DAI  || "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(), decimals: 18 },
-  ARB:  { symbol: "ARB",  addr: (process.env.ARB_ARB  || "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(), decimals: 18 }
+  ARB:  { symbol: "ARB",  addr: (process.env.ARB_ARB  || "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(), decimals: 18 },
+
+  // ДОБАВЛЕННЫЕ LINK И AAVE НА ARBITRUM
+  LINK: { symbol: "LINK", addr: (process.env.ARB_LINK || "0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7").toLowerCase(), decimals: 18 },
+  AAVE:{ symbol: "AAVE", addr: (process.env.ARB_AAVE || "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(), decimals: 18 }
 };
 
 const TOKENS_BY_CHAIN = {
@@ -130,7 +145,7 @@ const TOKENS_BY_CHAIN = {
   arbitrum: TOKENS_ARBITRUM
 };
 
-const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC")
+const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI")
   .split(",")
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
@@ -454,6 +469,7 @@ function shouldSend(statePair, profitPctVal) {
   const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
   if (!Number.isFinite(profitPctVal)) return { ok: false, reason: "nan" };
+  if (profitPctVal <= 0) return { ok: false, reason: "non_positive" }; // НЕ ОТПРАВЛЯЕМ ОТРИЦАТЕЛЬНЫЙ ПРОФИТ
   if (profitPctVal < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
   const since = now - lastSentAt;
