@@ -80,6 +80,28 @@ jobs:
           # какие токены смотреть (как в коде по умолчанию, можно менять строкой)
           WATCH: "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC"
 
+          # ===== ДОБАВЛЕНО: адреса роутеров и токенов ИЗ ТВОИХ SECRETS =====
+          SUSHI_ROUTER: ${{ secrets.SUSHI_ROUTER }}
+          QUICKSWAP_ROUTER: ${{ secrets.QUICKSWAP_ROUTER }}
+          AERODROME_ROUTER: ${{ secrets.AERODROME_ROUTER }}
+          CAMELOT_ROUTER: ${{ secrets.CAMELOT_ROUTER }}
+
+          UNI_QUOTER_V2_POLYGON: ${{ secrets.UNI_QUOTER_V2_POLYGON }}
+
+          POLYGON_USDT: ${{ secrets.POLYGON_USDT }}
+          POLYGON_DAI: ${{ secrets.POLYGON_DAI }}
+
+          BASE_USDC: ${{ secrets.BASE_USDC }}
+          BASE_USDT: ${{ secrets.BASE_USDT }}
+          BASE_WETH: ${{ secrets.BASE_WETH }}
+          BASE_ARB:  ${{ secrets.BASE_ARB }}
+
+          ARB_USDC: ${{ secrets.ARB_USDC }}
+          ARB_USDT: ${{ secrets.ARB_USDT }}
+          ARB_DAI:  ${{ secrets.ARB_DAI }}
+          ARB_WETH: ${{ secrets.ARB_WETH }}
+          ARB_ARB:  ${{ secrets.ARB_ARB }}
+
         run: node bot.js
 
       - name: Commit state.json if changed
