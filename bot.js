@@ -59,8 +59,8 @@ if (MODE === "aggressive") {
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
 // Slippage haircuts
-const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.15);
-const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.15);
+const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.10);
+const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.10);
 
 // Gas model per swap leg (USDC)
 const GAS_USDC_V2 = Number(process.env.GAS_USDC_V2 || 0.05);
