@@ -44,7 +44,7 @@ const MODE = String(process.env.MODE || "normal"); // "normal" | "aggressive"
 // минимальный профит для сигнала (по умолчанию 0.4%)
 let MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.4);
 let PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
-let COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 600);
+let COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 120);
 let BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 
 if (MODE === "aggressive") {
