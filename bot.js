@@ -977,14 +977,69 @@ const TOKENS_BY_CHAIN = {
   },
 };
 
-// WATCH — только те, что реально хочешь сканить
+// WATCH — общий список монет (будут искаться только там, где есть в TOKENS_BY_CHAIN)
 const WATCH = String(
   process.env.WATCH ||
-    "LINK,WMATIC,AAVE,WETH,USDT,USDC,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI"
+    [
+      // Stablecoins
+      "USDC",
+      "USDT",
+      "DAI",
+      "FRAX",
+      "TUSD",
+
+      // Majors
+      "WETH",
+      "WBTC",
+      "WMATIC",
+      "WAVAX",
+      "WBNB",
+      "WFTM",
+      "WGLMR",
+      "WCELO",
+      "WKAVA",
+
+      // Bluechips
+      "UNI",
+      "AAVE",
+      "LINK",
+      "CRV",
+      "BAL",
+      "SNX",
+      "COMP",
+      "MKR",
+
+      // L2 tokens
+      "ARB",
+      "OP",
+      "METIS",
+
+      // Extra liquidity / DEX tokens
+      "SUSHI",
+      "1INCH",
+      "CAKE",
+      "GMX",
+      "JOE",
+      "QUICK",
+      "PENDLE",
+      "LDO",
+      "GNO",
+      "RPL",
+      "COW",
+      "RNDR",
+      "INJ",
+      "TIA",
+      "STRK",
+      "ZRO",
+
+      // Дубли из старого набора, чтобы всё, что было, тоже осталось
+      "MATIC",
+    ].join(",")
 )
   .split(",")
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
+
 
 const DISABLE_AGGREGATORS =
   String(process.env.DISABLE_AGGREGATORS || "0") === "1";
