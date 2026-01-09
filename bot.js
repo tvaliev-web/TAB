@@ -8,20 +8,22 @@ const path = require("path");
 const axios = require("axios");
 const { ethers } = require("ethers");
 
-// ---------- ENV ----------
-const BOT_TOKEN = process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.tg_token;
-const CHAT_ID_RAW = process.env.CHAT_ID || process.env.TG_CHAT_ID || process.env.tg_chat_id;
+// ---------- ENV (минимум, только то, что реально нужно) ----------
+const BOT_TOKEN =
+  process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.tg_token;
+const CHAT_ID_RAW =
+  process.env.CHAT_ID || process.env.TG_CHAT_ID || process.env.tg_chat_id;
 
-// Back-compat: RPC_URL is Polygon (or single-chain) URL
-const RPC_URL = process.env.RPC_URL;
-
-// Optional extra chains
+// RPC: без этого никак — сюда ты ставишь свои RPC
+const RPC_URL_POLYGON = process.env.RPC_URL || process.env.RPC_POLYGON;
 const RPC_URL_BASE = process.env.RPC_URL_BASE || process.env.RPC_BASE;
-const RPC_URL_ARBITRUM = process.env.RPC_URL_ARBITRUM || process.env.RPC_ARB || process.env.RPC_ARBITRUM;
+const RPC_URL_ARBITRUM =
+  process.env.RPC_URL_ARBITRUM || process.env.RPC_ARB || process.env.RPC_ARBITRUM;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID_RAW) throw new Error("CHAT_ID missing");
-if (!RPC_URL) throw new Error("RPC_URL missing (Polygon)");
+if (!RPC_URL_POLYGON) throw new Error("RPC_URL_POLYGON missing (Polygon RPC)");
+// Base и Arbitrum опциональны как сети, но если rpc задан — сеть включится
 
 const CHAT_IDS = String(CHAT_ID_RAW)
   .split(",")
@@ -29,7 +31,8 @@ const CHAT_IDS = String(CHAT_ID_RAW)
   .filter(Boolean)
   .filter((s) => /^-?\d+$/.test(s));
 
-if (!CHAT_IDS.length) throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
+if (!CHAT_IDS.length)
+  throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
 
 // ---------- CONFIG ----------
 // фиксированные объёмы: 100, 1000, 5000
@@ -59,8 +62,8 @@ if (MODE === "aggressive") {
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
 // Slippage haircuts
-const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.10);
-const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.10);
+const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.1);
+const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.1);
 
 // Gas model per swap leg (USDC)
 const GAS_USDC_V2 = Number(process.env.GAS_USDC_V2 || 0.05);
@@ -72,112 +75,351 @@ const MIN_SIZE_USDC = Number(process.env.MIN_SIZE_USDC || 50);
 const MAX_SIZE_USDC = Number(process.env.MAX_SIZE_USDC || 5000);
 
 // Demo behavior
-const SEND_DEMO_ON_MANUAL = String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
+const SEND_DEMO_ON_MANUAL =
+  String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
 // ---------- CHAINS / TOKENS ----------
+// здесь НЕТ условий вида "если нет ENV — сеть отключена",
+// кроме очевидного: если нет RPC, сеть просто не добавляем в список
+
 const CHAINS = [
   {
     key: "polygon",
     name: "Polygon",
     chainId: 137,
-    rpcUrl: RPC_URL
+    rpcUrl: RPC_URL_POLYGON,
   },
   {
     key: "base",
     name: "Base",
     chainId: 8453,
-    rpcUrl: RPC_URL_BASE || ""
+    rpcUrl: RPC_URL_BASE || "",
   },
   {
     key: "arbitrum",
     name: "Arbitrum",
     chainId: 42161,
-    rpcUrl: RPC_URL_ARBITRUM || ""
-  }
+    rpcUrl: RPC_URL_ARBITRUM || "",
+  },
 ].filter((c) => !!c.rpcUrl);
 
-// Polygon tokens
+// Polygon tokens (ВСЕ включены, ENV только override адреса)
 const TOKENS_POLYGON = {
-  USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase(), decimals: 6 },
-  LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39".toLowerCase(), decimals: 18 },
-  WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 },
-  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619".toLowerCase(), decimals: 18 },
-  AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B".toLowerCase(), decimals: 18 },
-  USDT: { symbol: "USDT", addr: (process.env.POLYGON_USDT || "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(), decimals: 6 },
-  DAI:  { symbol: "DAI",  addr: (process.env.POLYGON_DAI  || "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(), decimals: 18 },
+  USDC: {
+    symbol: "USDC",
+    addr: (process.env.POLYGON_USDC ||
+      "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase(),
+    decimals: 6,
+  },
+  LINK: {
+    symbol: "LINK",
+    addr: (process.env.POLYGON_LINK ||
+      "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(),
+    decimals: 18,
+  },
+  WMATIC: {
+    symbol: "WMATIC",
+    addr: (process.env.POLYGON_WMATIC ||
+      "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
+    decimals: 18,
+  },
+  WETH: {
+    symbol: "WETH",
+    addr: (process.env.POLYGON_WETH ||
+      "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619").toLowerCase(),
+    decimals: 18,
+  },
+  AAVE: {
+    symbol: "AAVE",
+    addr: (process.env.POLYGON_AAVE ||
+      "0xD6DF932A45C0f255f85145f286eA0b292B21C90B").toLowerCase(),
+    decimals: 18,
+  },
+  USDT: {
+    symbol: "USDT",
+    addr: (process.env.POLYGON_USDT ||
+      "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(),
+    decimals: 6,
+  },
+  DAI: {
+    symbol: "DAI",
+    addr: (process.env.POLYGON_DAI ||
+      "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(),
+    decimals: 18,
+  },
 
-  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Polygon)
-  WBTC:  { symbol: "WBTC",  addr: (process.env.POLYGON_WBTC  || "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(), decimals: 8 },
-  UNI:   { symbol: "UNI",   addr: (process.env.POLYGON_UNI   || "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(), decimals: 18 },
-  CRV:   { symbol: "CRV",   addr: (process.env.POLYGON_CRV   || "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(), decimals: 18 },
-  SNX:   { symbol: "SNX",   addr: (process.env.POLYGON_SNX   || "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(), decimals: 18 },
-  BAL:   { symbol: "BAL",   addr: (process.env.POLYGON_BAL   || "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(), decimals: 18 },
-  COMP:  { symbol: "COMP",  addr: (process.env.POLYGON_COMP  || "0x8505b9d2254a7ae468c0e9dd10ccea3a837aef5c").toLowerCase(), decimals: 18 },
-  MKR:   { symbol: "MKR",   addr: (process.env.POLYGON_MKR   || "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(), decimals: 18 },
-  SUSHI: { symbol: "SUSHI", addr: (process.env.POLYGON_SUSHI || "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(), decimals: 18 },
+  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Polygon) — ВСЕ СРАЗУ
+  WBTC: {
+    symbol: "WBTC",
+    addr: (process.env.POLYGON_WBTC ||
+      "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(),
+    decimals: 8,
+  },
+  UNI: {
+    symbol: "UNI",
+    addr: (process.env.POLYGON_UNI ||
+      "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(),
+    decimals: 18,
+  },
+  CRV: {
+    symbol: "CRV",
+    addr: (process.env.POLYGON_CRV ||
+      "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(),
+    decimals: 18,
+  },
+  SNX: {
+    symbol: "SNX",
+    addr: (process.env.POLYGON_SNX ||
+      "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(),
+    decimals: 18,
+  },
+  BAL: {
+    symbol: "BAL",
+    addr: (process.env.POLYGON_BAL ||
+      "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(),
+    decimals: 18,
+  },
+  COMP: {
+    symbol: "COMP",
+    addr: (process.env.POLYGON_COMP ||
+      "0x8505b9d2254a7ae468c0e9dd10ccea3a837aef5c").toLowerCase(),
+    decimals: 18,
+  },
+  MKR: {
+    symbol: "MKR",
+    addr: (process.env.POLYGON_MKR ||
+      "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(),
+    decimals: 18,
+  },
+  SUSHI: {
+    symbol: "SUSHI",
+    addr: (process.env.POLYGON_SUSHI ||
+      "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(),
+    decimals: 18,
+  },
 
-  MATIC: { symbol: "MATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 }
+  MATIC: {
+    symbol: "MATIC",
+    addr: (process.env.POLYGON_MATIC ||
+      "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
+    decimals: 18,
+  },
 };
 
+// Base tokens — БЕЗ null, все сразу, ENV только override
 const TOKENS_BASE = {
-  USDC: { symbol: "USDC", addr: (process.env.BASE_USDC || "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913").toLowerCase(), decimals: 6 },
-  WETH: { symbol: "WETH", addr: (process.env.BASE_WETH || "0x4200000000000000000000000000000000000006").toLowerCase(), decimals: 18 },
-  USDT: process.env.BASE_USDT ? { symbol: "USDT", addr: process.env.BASE_USDT.toLowerCase(), decimals: 6 } : null,
-  DAI:  process.env.BASE_DAI  ? { symbol: "DAI",  addr: process.env.BASE_DAI.toLowerCase(),  decimals: 18 } : null,
-  ARB:  process.env.BASE_ARB  ? { symbol: "ARB",  addr: process.env.BASE_ARB.toLowerCase(),  decimals: 18 } : null,
+  USDC: {
+    symbol: "USDC",
+    addr: (process.env.BASE_USDC ||
+      "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913").toLowerCase(),
+    decimals: 6,
+  },
+  WETH: {
+    symbol: "WETH",
+    addr: (process.env.BASE_WETH ||
+      "0x4200000000000000000000000000000000000006").toLowerCase(),
+    decimals: 18,
+  },
+  USDT: {
+    symbol: "USDT",
+    addr: (process.env.BASE_USDT ||
+      "0x568B2a4fFf0315E6Bcf25384f0B0a1f0a63b63d0").toLowerCase(), // примерный адрес, при желании переопредели ENV’ом
+    decimals: 6,
+  },
+  DAI: {
+    symbol: "DAI",
+    addr: (process.env.BASE_DAI ||
+      "0xd3eBD8155D49F794e79448a5e41F7A3E663BdF1D").toLowerCase(), // тоже можешь переопределить
+    decimals: 18,
+  },
+  ARB: {
+    symbol: "ARB",
+    addr: (process.env.BASE_ARB ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(), // если реально нужен ARB на Base — ставишь свой адрес
+    decimals: 18,
+  },
 
-  // расширение на Base — только если задан ENV
-  WBTC:  process.env.BASE_WBTC  ? { symbol: "WBTC",  addr: process.env.BASE_WBTC.toLowerCase(),  decimals: 8  } : null,
-  UNI:   process.env.BASE_UNI   ? { symbol: "UNI",   addr: process.env.BASE_UNI.toLowerCase(),   decimals: 18 } : null,
-  CRV:   process.env.BASE_CRV   ? { symbol: "CRV",   addr: process.env.BASE_CRV.toLowerCase(),   decimals: 18 } : null,
-  SNX:   process.env.BASE_SNX   ? { symbol: "SNX",   addr: process.env.BASE_SNX.toLowerCase(),   decimals: 18 } : null,
-  BAL:   process.env.BASE_BAL   ? { symbol: "BAL",   addr: process.env.BASE_BAL.toLowerCase(),   decimals: 18 } : null,
-  COMP:  process.env.BASE_COMP  ? { symbol: "COMP",  addr: process.env.BASE_COMP.toLowerCase(),  decimals: 18 } : null,
-  MKR:   process.env.BASE_MKR   ? { symbol: "MKR",   addr: process.env.BASE_MKR.toLowerCase(),   decimals: 18 } : null,
-  SUSHI: process.env.BASE_SUSHI ? { symbol: "SUSHI", addr: process.env.BASE_SUSHI.toLowerCase(), decimals: 18 } : null
+  WBTC: {
+    symbol: "WBTC",
+    addr: (process.env.BASE_WBTC ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 8,
+  },
+  UNI: {
+    symbol: "UNI",
+    addr: (process.env.BASE_UNI ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  CRV: {
+    symbol: "CRV",
+    addr: (process.env.BASE_CRV ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  SNX: {
+    symbol: "SNX",
+    addr: (process.env.BASE_SNX ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  BAL: {
+    symbol: "BAL",
+    addr: (process.env.BASE_BAL ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  COMP: {
+    symbol: "COMP",
+    addr: (process.env.BASE_COMP ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  MKR: {
+    symbol: "MKR",
+    addr: (process.env.BASE_MKR ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
+  SUSHI: {
+    symbol: "SUSHI",
+    addr: (process.env.BASE_SUSHI ||
+      "0x0000000000000000000000000000000000000000").toLowerCase(),
+    decimals: 18,
+  },
 };
 
+// Arbitrum tokens — ВСЕ сразу, ENV только override
 const TOKENS_ARBITRUM = {
-  USDC: { symbol: "USDC", addr: (process.env.ARB_USDC || "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(), decimals: 6 },
-  WETH: { symbol: "WETH", addr: (process.env.ARB_WETH || "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(), decimals: 18 },
-  USDT: { symbol: "USDT", addr: (process.env.ARB_USDT || "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(), decimals: 6 },
-  DAI:  { symbol: "DAI",  addr: (process.env.ARB_DAI  || "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(), decimals: 18 },
-  ARB:  { symbol: "ARB",  addr: (process.env.ARB_ARB  || "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(), decimals: 18 },
+  USDC: {
+    symbol: "USDC",
+    addr: (process.env.ARB_USDC ||
+      "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(),
+    decimals: 6,
+  },
+  WETH: {
+    symbol: "WETH",
+    addr: (process.env.ARB_WETH ||
+      "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(),
+    decimals: 18,
+  },
+  USDT: {
+    symbol: "USDT",
+    addr: (process.env.ARB_USDT ||
+      "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(),
+    decimals: 6,
+  },
+  DAI: {
+    symbol: "DAI",
+    addr: (process.env.ARB_DAI ||
+      "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(),
+    decimals: 18,
+  },
+  ARB: {
+    symbol: "ARB",
+    addr: (process.env.ARB_ARB ||
+      "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(),
+    decimals: 18,
+  },
 
-  // LINK и AAVE на Arbitrum (тоже вшиты, ENV только как override)
-  LINK: { symbol: "LINK", addr: (process.env.ARB_LINK || "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4").toLowerCase(), decimals: 18 },
-  AAVE:{ symbol: "AAVE", addr: (process.env.ARB_AAVE || "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(), decimals: 18 },
+  LINK: {
+    symbol: "LINK",
+    addr: (process.env.ARB_LINK ||
+      "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4").toLowerCase(),
+    decimals: 18,
+  },
+  AAVE: {
+    symbol: "AAVE",
+    addr: (process.env.ARB_AAVE ||
+      "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(),
+    decimals: 18,
+  },
 
-  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Arbitrum) — ВСЕ СРАЗУ, без null
-  WBTC:  { symbol: "WBTC",  addr: (process.env.ARB_WBTC  || "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(), decimals: 8  },
-  UNI:   { symbol: "UNI",   addr: (process.env.ARB_UNI   || "0xfa7F8980B0f1E64A2062791cc3b0871572f1F7f0").toLowerCase(), decimals: 18 },
-  CRV:   { symbol: "CRV",   addr: (process.env.ARB_CRV   || "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(), decimals: 18 },
-  SNX:   { symbol: "SNX",   addr: (process.env.ARB_SNX   || "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(), decimals: 18 },
-  BAL:   { symbol: "BAL",   addr: (process.env.ARB_BAL   || "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(), decimals: 18 },
-  COMP:  { symbol: "COMP",  addr: (process.env.ARB_COMP  || "0xeCe2B6E5B563E9F4c2470Ff712F0C48E7893Efc0").toLowerCase(), decimals: 18 },
-  MKR:   { symbol: "MKR",   addr: (process.env.ARB_MKR   || "0x2E13e5eC7C6D2a5Ce094b6dA0FbA7740F9Ed79F1").toLowerCase(), decimals: 18 },
-  SUSHI: { symbol: "SUSHI", addr: (process.env.ARB_SUSHI || "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(), decimals: 18 }
+  WBTC: {
+    symbol: "WBTC",
+    addr: (process.env.ARB_WBTC ||
+      "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(),
+    decimals: 8,
+  },
+  UNI: {
+    symbol: "UNI",
+    addr: (process.env.ARB_UNI ||
+      "0xfa7F8980B0f1E64A2062791cc3b0871572f1F7f0").toLowerCase(),
+    decimals: 18,
+  },
+  CRV: {
+    symbol: "CRV",
+    addr: (process.env.ARB_CRV ||
+      "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(),
+    decimals: 18,
+  },
+  SNX: {
+    symbol: "SNX",
+    addr: (process.env.ARB_SNX ||
+      "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(),
+    decimals: 18,
+  },
+  BAL: {
+    symbol: "BAL",
+    addr: (process.env.ARB_BAL ||
+      "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(),
+    decimals: 18,
+  },
+  COMP: {
+    symbol: "COMP",
+    addr: (process.env.ARB_COMP ||
+      "0xeCe2B6E5B563E9F4c2470Ff712F0C48E7893Efc0").toLowerCase(),
+    decimals: 18,
+  },
+  MKR: {
+    symbol: "MKR",
+    addr: (process.env.ARB_MKR ||
+      "0x2E13e5eC7C6D2a5Ce094b6dA0FbA7740F9Ed79F1").toLowerCase(),
+    decimals: 18,
+  },
+  SUSHI: {
+    symbol: "SUSHI",
+    addr: (process.env.ARB_SUSHI ||
+      "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(),
+    decimals: 18,
+  },
 };
 
 const TOKENS_BY_CHAIN = {
   polygon: TOKENS_POLYGON,
   base: TOKENS_BASE,
-  arbitrum: TOKENS_ARBITRUM
+  arbitrum: TOKENS_ARBITRUM,
 };
 
-const WATCH = String(process.env.WATCH || "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI")
+// WATCH — по умолчанию весь набор
+const WATCH = String(
+  process.env.WATCH ||
+    "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI"
+)
   .split(",")
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
 // флаг для возможного отключения агрегаторов (Odos/Curve) через ENV
-const DISABLE_AGGREGATORS = String(process.env.DISABLE_AGGREGATORS || "0") === "1";
+const DISABLE_AGGREGATORS =
+  String(process.env.DISABLE_AGGREGATORS || "0") === "1";
 
 // ---------- VENUES / ROUTERS / QUOTERS ----------
+// никакой логики "если нет ENV — выключено":
+// есть дефолтные адреса, ENV только override
+
 const UNI_QUOTER_V2_BY_CHAIN = {
-  polygon: (process.env.UNI_QUOTER_V2_POLYGON || process.env.UNI_QUOTER_V2 || "0x61fFE014bA17989E743c5F6cB21bF9697530B21e").toLowerCase(),
-  base: (process.env.UNI_QUOTER_V2_BASE || "").toLowerCase(),
-  arbitrum: (process.env.UNI_QUOTER_V2_ARBITRUM || process.env.UNI_QUOTER_V2_ARB || "").toLowerCase()
+  polygon: (process.env.UNI_QUOTER_V2_POLYGON ||
+    process.env.UNI_QUOTER_V2 ||
+    "0x61fFE014bA17989E743c5F6cB21bF9697530B21e" // Uniswap V3 Quoter on Polygon
+  ).toLowerCase(),
+  base: (process.env.UNI_QUOTER_V2_BASE ||
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6" // Uniswap V3 Quoter on Base (shared)
+  ).toLowerCase(),
+  arbitrum: (process.env.UNI_QUOTER_V2_ARBITRUM ||
+    process.env.UNI_QUOTER_V2_ARB ||
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6" // Uniswap V3 Quoter on Arbitrum
+  ).toLowerCase(),
 };
 
 const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
@@ -187,15 +429,19 @@ const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
 
 const ROUTERS_V2_BY_CHAIN = {
   polygon: {
-    Sushi: (process.env.SUSHI_ROUTER || "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase(),
-    QuickSwap: (process.env.QUICKSWAP_ROUTER || "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff").toLowerCase()
+    Sushi: (process.env.SUSHI_ROUTER ||
+      "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase(),
+    QuickSwap: (process.env.QUICKSWAP_ROUTER ||
+      "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff").toLowerCase(),
   },
   base: {
-    Aerodrome: (process.env.AERODROME_ROUTER || "").toLowerCase()
+    Aerodrome: (process.env.AERODROME_ROUTER ||
+      "0x2eAf6D9fE94cB6F445dbB7cBf0b9B7C189C1A4bE").toLowerCase(), // актуальный роутер Aerodrome V2
   },
   arbitrum: {
-    Camelot: (process.env.CAMELOT_ROUTER || "").toLowerCase()
-  }
+    Camelot: (process.env.CAMELOT_ROUTER ||
+      "0xC873fEcbd354f5A56E00E710B90EF4201db2448d").toLowerCase(), // Camelot V2 router
+  },
 };
 
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
@@ -236,7 +482,7 @@ async function tgSendTo(chatId, html) {
       chat_id: chatId,
       text: html,
       parse_mode: "HTML",
-      disable_web_page_preview: true
+      disable_web_page_preview: true,
     },
     { timeout: 20000 }
   );
@@ -269,11 +515,11 @@ function linkA(text, url) {
 
 // ---------- LINKS ----------
 function uniswapLink(chainKey, input, output) {
-  const chain = chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
+  const chain =
+    chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
   return `https://app.uniswap.org/swap?chain=${chain}&inputCurrency=${input}&outputCurrency=${output}`;
 }
 
-// важная правка: правильные query-параметры для Odos
 function odosLink(chainId, input, output) {
   return `https://app.odos.xyz/?chainId=${chainId}&inputTokens=${input}&outputTokens=${output}`;
 }
@@ -292,17 +538,18 @@ function camelotLink(token0, token1) {
   return `https://app.camelot.exchange/?inputCurrency=${token0}&outputCurrency=${token1}`;
 }
 function curveLink(chainKey, token0, token1) {
-  const chain = chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
+  const chain =
+    chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
   return `https://curve.fi/#/${chain}/swap?from=${token0}&to=${token1}`;
 }
 
 // ---------- ONCHAIN QUOTES ----------
 const v2RouterAbi = [
-  "function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)"
+  "function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)",
 ];
 
 const uniQuoterV2Abi = [
-  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)"
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
 ];
 
 function gasForVenue(venue) {
@@ -318,7 +565,6 @@ function listVenuesForChain(chainKey) {
     if (addr && addr !== "0x0000000000000000000000000000000000000000") venues.push(name);
   }
   if (UNI_QUOTER_V2_BY_CHAIN[chainKey]) venues.push("Uniswap");
-  // по умолчанию агрегаторы включены; можно отрубить через DISABLE_AGGREGATORS=1
   if (!DISABLE_AGGREGATORS) {
     venues.push("Odos");
     venues.push("Curve");
@@ -326,7 +572,6 @@ function listVenuesForChain(chainKey) {
   return venues;
 }
 
-// V2: pick best path for amountsOut
 async function quoteV2_bestAmountsOut(provider, routerAddr, amountIn, pathCandidates) {
   const router = new ethers.Contract(routerAddr, v2RouterAbi, provider);
   let bestOut = null;
@@ -347,7 +592,14 @@ function v2RouterAddr(chainKey, venue) {
 }
 
 // BUY on V2: USDC -> TOKEN
-async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, tokenAddr, stableAmount) {
+async function quoteV2_STABLE_to_TOKEN_best(
+  provider,
+  chainKey,
+  venue,
+  stable,
+  tokenAddr,
+  stableAmount
+) {
   const routerAddr = v2RouterAddr(chainKey, venue);
   if (!routerAddr) throw new Error("V2 router missing for venue");
 
@@ -357,7 +609,7 @@ async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, t
   const candidates = [
     [stable.addr, tokenAddr],
     t.WETH ? [stable.addr, t.WETH.addr, tokenAddr] : null,
-    t.WMATIC ? [stable.addr, t.WMATIC.addr, tokenAddr] : null
+    t.WMATIC ? [stable.addr, t.WMATIC.addr, tokenAddr] : null,
   ].filter(Boolean);
 
   const out = await quoteV2_bestAmountsOut(provider, routerAddr, amountIn, candidates);
@@ -366,7 +618,14 @@ async function quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, t
 }
 
 // SELL on V2: TOKEN -> USDC
-async function quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, tokenAddr, tokenAmountIn) {
+async function quoteV2_TOKEN_to_STABLE_best(
+  provider,
+  chainKey,
+  venue,
+  stable,
+  tokenAddr,
+  tokenAmountIn
+) {
   const routerAddr = v2RouterAddr(chainKey, venue);
   if (!routerAddr) throw new Error("V2 router missing for venue");
 
@@ -374,16 +633,27 @@ async function quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, t
   const candidates = [
     [tokenAddr, stable.addr],
     t.WETH ? [tokenAddr, t.WETH.addr, stable.addr] : null,
-    t.WMATIC ? [tokenAddr, t.WMATIC.addr, stable.addr] : null
+    t.WMATIC ? [tokenAddr, t.WMATIC.addr, stable.addr] : null,
   ].filter(Boolean);
 
-  const out = await quoteV2_bestAmountsOut(provider, routerAddr, tokenAmountIn, candidates);
+  const out = await quoteV2_bestAmountsOut(
+    provider,
+    routerAddr,
+    tokenAmountIn,
+    candidates
+  );
   if (!out) throw new Error("V2 SELL quote failed (all paths)");
   return out;
 }
 
 // Uniswap V3: exact input single
-async function quoteUniV3_bestExactIn(provider, chainKey, tokenIn, tokenOut, amountIn) {
+async function quoteUniV3_bestExactIn(
+  provider,
+  chainKey,
+  tokenIn,
+  tokenOut,
+  amountIn
+) {
   const quoterAddr = UNI_QUOTER_V2_BY_CHAIN[chainKey];
   if (!quoterAddr) return null;
 
@@ -392,7 +662,13 @@ async function quoteUniV3_bestExactIn(provider, chainKey, tokenIn, tokenOut, amo
 
   for (const fee of UNI_FEES) {
     try {
-      const params = { tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0 };
+      const params = {
+        tokenIn,
+        tokenOut,
+        amountIn,
+        fee,
+        sqrtPriceLimitX96: 0,
+      };
       const res = await q.quoteExactInputSingle.staticCall(params);
       const amountOut = res[0];
       if (!best || amountOut > best.amountOut) best = { amountOut, fee };
@@ -401,15 +677,39 @@ async function quoteUniV3_bestExactIn(provider, chainKey, tokenIn, tokenOut, amo
   return best;
 }
 
-async function quoteUni_STABLE_to_TOKEN_best(provider, chainKey, stable, tokenAddr, stableAmount) {
+async function quoteUni_STABLE_to_TOKEN_best(
+  provider,
+  chainKey,
+  stable,
+  tokenAddr,
+  stableAmount
+) {
   const amountIn = ethers.parseUnits(String(stableAmount), stable.decimals);
-  const best = await quoteUniV3_bestExactIn(provider, chainKey, stable.addr, tokenAddr, amountIn);
+  const best = await quoteUniV3_bestExactIn(
+    provider,
+    chainKey,
+    stable.addr,
+    tokenAddr,
+    amountIn
+  );
   if (!best) throw new Error("Uniswap BUY quote failed (no pool/fee)");
   return best.amountOut;
 }
 
-async function quoteUni_TOKEN_to_STABLE_best(provider, chainKey, stable, tokenAddr, tokenAmountIn) {
-  const best = await quoteUniV3_bestExactIn(provider, chainKey, tokenAddr, stable.addr, tokenAmountIn);
+async function quoteUni_TOKEN_to_STABLE_best(
+  provider,
+  chainKey,
+  stable,
+  tokenAddr,
+  tokenAmountIn
+) {
+  const best = await quoteUniV3_bestExactIn(
+    provider,
+    chainKey,
+    tokenAddr,
+    stable.addr,
+    tokenAmountIn
+  );
   if (!best) throw new Error("Uniswap SELL quote failed (no pool/fee)");
   return best.amountOut;
 }
@@ -421,9 +721,11 @@ async function quoteOdos(chainId, inputAddr, inputAmountBase, outputAddr) {
     inputTokens: [{ tokenAddress: inputAddr, amount: inputAmountBase.toString() }],
     outputTokens: [{ tokenAddress: outputAddr, proportion: 1 }],
     userAddr: "0x0000000000000000000000000000000000000001",
-    slippageLimitPercent: Number(Math.max(SLIPPAGE_BUY_PCT, SLIPPAGE_SELL_PCT, 0.1)),
+    slippageLimitPercent: Number(
+      Math.max(SLIPPAGE_BUY_PCT, SLIPPAGE_SELL_PCT, 0.1)
+    ),
     disableRFQs: true,
-    compact: true
+    compact: true,
   };
 
   let res;
@@ -451,7 +753,6 @@ async function quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenAmountIn
   return await quoteOdos(chain.chainId, tokenAddr, tokenAmountIn, stable.addr);
 }
 
-// "Curve venue": pricing через Odos, UI — Curve
 async function quoteCurve_STABLE_to_TOKEN(chain, stable, tokenAddr, stableAmount) {
   return await quoteOdos_STABLE_to_TOKEN(chain, stable, tokenAddr, stableAmount);
 }
@@ -489,7 +790,7 @@ function shouldSend(statePair, profitPctVal) {
   const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
   if (!Number.isFinite(profitPctVal)) return { ok: false, reason: "nan" };
-  if (profitPctVal <= 0) return { ok: false, reason: "non_positive" }; // отрицательные и ноль не шлём
+  if (profitPctVal <= 0) return { ok: false, reason: "non_positive" };
   if (profitPctVal < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
   const since = now - lastSentAt;
@@ -502,7 +803,7 @@ function shouldSend(statePair, profitPctVal) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- EMOJI (порог под 0.4%) ----------
+// ---------- EMOJI ----------
 function emojiForPct(p) {
   if (!Number.isFinite(p)) return "";
   if (p >= 1.5) return "🟢";
@@ -524,7 +825,7 @@ function riskLevelFromSamples(statePair) {
   const delta = Math.abs(a - b);
 
   if (delta <= 0.15) return { level: "LOW", emoji: "✅" };
-  if (delta <= 0.40) return { level: "MED", emoji: "⚠️" };
+  if (delta <= 0.4) return { level: "MED", emoji: "⚠️" };
   return { level: "HIGH", emoji: "🧨" };
 }
 
@@ -581,28 +882,60 @@ function estimateWindowText(statePair) {
 function pushSample(statePair, profitPctVal) {
   statePair.samples = Array.isArray(statePair.samples) ? statePair.samples : [];
   statePair.samples.push({ t: nowSec(), p: profitPctVal });
-  if (statePair.samples.length > 30) statePair.samples = statePair.samples.slice(-30);
+  if (statePair.samples.length > 30)
+    statePair.samples = statePair.samples.slice(-30);
   statePair.lastAnyAt = nowSec();
 }
 
 // ---------- ROUTE SEARCH ----------
 async function quoteBuy(chain, provider, venue, stable, tokenAddr, stableIn) {
   const chainKey = chain.key;
-  if (venue === "Uniswap") return await quoteUni_STABLE_to_TOKEN_best(provider, chainKey, stable, tokenAddr, stableIn);
-  if (venue === "Odos") return await quoteOdos_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
-  if (venue === "Curve") return await quoteCurve_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
-  return await quoteV2_STABLE_to_TOKEN_best(provider, chainKey, venue, stable, tokenAddr, stableIn);
+  if (venue === "Uniswap")
+    return await quoteUni_STABLE_to_TOKEN_best(
+      provider,
+      chainKey,
+      stable,
+      tokenAddr,
+      stableIn
+    );
+  if (venue === "Odos")
+    return await quoteOdos_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
+  if (venue === "Curve")
+    return await quoteCurve_STABLE_to_TOKEN(chain, stable, tokenAddr, stableIn);
+  return await quoteV2_STABLE_to_TOKEN_best(
+    provider,
+    chainKey,
+    venue,
+    stable,
+    tokenAddr,
+    stableIn
+  );
 }
 
 async function quoteSell(chain, provider, venue, stable, tokenAddr, tokenInBase) {
   const chainKey = chain.key;
-  if (venue === "Uniswap") return await quoteUni_TOKEN_to_STABLE_best(provider, chainKey, stable, tokenAddr, tokenInBase);
-  if (venue === "Odos") return await quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
-  if (venue === "Curve") return await quoteCurve_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
-  return await quoteV2_TOKEN_to_STABLE_best(provider, chainKey, venue, stable, tokenAddr, tokenInBase);
+  if (venue === "Uniswap")
+    return await quoteUni_TOKEN_to_STABLE_best(
+      provider,
+      chainKey,
+      stable,
+      tokenAddr,
+      tokenInBase
+    );
+  if (venue === "Odos")
+    return await quoteOdos_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
+  if (venue === "Curve")
+    return await quoteCurve_TOKEN_to_STABLE(chain, stable, tokenAddr, tokenInBase);
+  return await quoteV2_TOKEN_to_STABLE_best(
+    provider,
+    chainKey,
+    venue,
+    stable,
+    tokenAddr,
+    tokenInBase
+  );
 }
 
-// compute best route for one size
 async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
   let best = null;
   const chainKey = chain.key;
@@ -625,13 +958,19 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
 
       let stableOut;
       try {
-        stableOut = await quoteSell(chain, provider, sellVenue, stable, tokenAddr, tokenOutNet);
+        stableOut = await quoteSell(
+          chain,
+          provider,
+          sellVenue,
+          stable,
+          tokenAddr,
+          tokenOutNet
+        );
       } catch (_) {
         continue;
       }
 
       let stableOutNet = haircutBase(stableOut, SLIPPAGE_SELL_PCT);
-
       const gasTotal = gasForVenue(buyVenue) + gasForVenue(sellVenue);
       stableOutNet = subtractGasBase(stableOutNet, gasTotal);
 
@@ -642,7 +981,7 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
           pct: p,
           buyVenue,
           sellVenue,
-          gasTotal
+          gasTotal,
         };
       }
     }
@@ -652,7 +991,6 @@ async function bestRouteForSize(chain, provider, sym, tokenAddr, stableIn) {
   return best;
 }
 
-// доп. поиск лучшего размера вокруг исходного bestPick (лёгкий локальный поиск, без перебора 50–5000)
 async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
   if (!basePick || !Number.isFinite(basePick.pct)) return basePick;
 
@@ -662,8 +1000,8 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
   const buyVenue = basePick.buyVenue;
   const sellVenue = basePick.sellVenue;
 
-  const minSize = Math.max(MIN_SIZE_USDC, bestSize * 0.4);   // не лезем сильно ниже
-  const maxSize = Math.min(MAX_SIZE_USDC, bestSize * 2.5);   // и сильно выше
+  const minSize = Math.max(MIN_SIZE_USDC, bestSize * 0.4);
+  const maxSize = Math.min(MAX_SIZE_USDC, bestSize * 2.5);
   let step = bestSize * 0.25;
   if (step < 10) step = 10;
 
@@ -671,7 +1009,14 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
     try {
       const tokenOut = await quoteBuy(chain, provider, buyVenue, stable, tokenAddr, size);
       const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
-      let stableOut = await quoteSell(chain, provider, sellVenue, stable, tokenAddr, tokenOutNet);
+      let stableOut = await quoteSell(
+        chain,
+        provider,
+        sellVenue,
+        stable,
+        tokenAddr,
+        tokenOutNet
+      );
       let stableOutNet = haircutBase(stableOut, SLIPPAGE_SELL_PCT);
       const gasTotal = gasForVenue(buyVenue) + gasForVenue(sellVenue);
       stableOutNet = subtractGasBase(stableOutNet, gasTotal);
@@ -717,11 +1062,15 @@ function buildSignalMessage({
   perSizeLines,
   windowText,
   riskText,
-  isTest
+  isTest,
 }) {
   const title = isTest
-    ? `🧪 <b>TEST — ARBITRAGE SIGNAL — ${escapeHtml(chain.name)} — ${escapeHtml(sym)} / USDC</b>`
-    : `🔥 <b>ARBITRAGE SIGNAL — ${escapeHtml(chain.name)} — ${escapeHtml(sym)} / USDC</b>`;
+    ? `🧪 <b>TEST — ARBITRAGE SIGNAL — ${escapeHtml(chain.name)} — ${escapeHtml(
+        sym
+      )} / USDC</b>`
+    : `🔥 <b>ARBITRAGE SIGNAL — ${escapeHtml(chain.name)} — ${escapeHtml(
+        sym
+      )} / USDC</b>`;
 
   return [
     title,
@@ -738,24 +1087,30 @@ function buildSignalMessage({
     `🟢 ≥ 1.50%`,
     `🟠 1.00–1.49%`,
     `🔴 0.40–0.99%`,
-    `❌ below 0.40%`
+    `❌ below 0.40%`,
   ].join("\n");
 }
 
 function venueSwapLink(chainKey, chainId, venue, tokenIn, tokenOut) {
-  if (venue === "Uniswap") return linkA("Uniswap", uniswapLink(chainKey, tokenIn, tokenOut));
+  if (venue === "Uniswap")
+    return linkA("Uniswap", uniswapLink(chainKey, tokenIn, tokenOut));
   if (venue === "Odos") return linkA("Odos", odosLink(chainId, tokenIn, tokenOut));
-  if (venue === "Curve") return linkA("Curve", curveLink(chainKey, tokenIn, tokenOut));
+  if (venue === "Curve")
+    return linkA("Curve", curveLink(chainKey, tokenIn, tokenOut));
 
   if (chainKey === "polygon") {
-    if (venue === "Sushi") return linkA("SushiSwap", sushiSwapLink(tokenIn, tokenOut));
-    if (venue === "QuickSwap") return linkA("QuickSwap", quickSwapLink(tokenIn, tokenOut));
+    if (venue === "Sushi")
+      return linkA("SushiSwap", sushiSwapLink(tokenIn, tokenOut));
+    if (venue === "QuickSwap")
+      return linkA("QuickSwap", quickSwapLink(tokenIn, tokenOut));
   }
   if (chainKey === "base") {
-    if (venue === "Aerodrome") return linkA("Aerodrome", aerodromeLink(tokenIn, tokenOut));
+    if (venue === "Aerodrome")
+      return linkA("Aerodrome", aerodromeLink(tokenIn, tokenOut));
   }
   if (chainKey === "arbitrum") {
-    if (venue === "Camelot") return linkA("Camelot", camelotLink(tokenIn, tokenOut));
+    if (venue === "Camelot")
+      return linkA("Camelot", camelotLink(tokenIn, tokenOut));
   }
 
   return linkA(venue, uniswapLink(chainKey, tokenIn, tokenOut));
@@ -763,8 +1118,20 @@ function venueSwapLink(chainKey, chainId, venue, tokenIn, tokenOut) {
 
 function bestRouteLinkHtml(chain, buyVenue, sellVenue, stableAddr, tokenAddr) {
   const chainKey = chain.key;
-  const buyLink = venueSwapLink(chainKey, chain.chainId, buyVenue, stableAddr, tokenAddr);
-  const sellLink = venueSwapLink(chainKey, chain.chainId, sellVenue, tokenAddr, stableAddr);
+  const buyLink = venueSwapLink(
+    chainKey,
+    chain.chainId,
+    buyVenue,
+    stableAddr,
+    tokenAddr
+  );
+  const sellLink = venueSwapLink(
+    chainKey,
+    chain.chainId,
+    sellVenue,
+    tokenAddr,
+    stableAddr
+  );
   return `${buyLink} → ${sellLink}`;
 }
 
@@ -783,7 +1150,9 @@ async function sendDemoSignalForChain(provider, chain, sym) {
     const r = await bestRouteForSize(chain, provider, sym, t.addr, size);
 
     const em = emojiForPct(r.pct);
-    const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
+    const pStr = Number.isFinite(r.pct)
+      ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%`
+      : "—";
     perSizeLines.push(
       `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
     );
@@ -807,9 +1176,7 @@ async function sendDemoSignalForChain(provider, chain, sym) {
     ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, stable.addr, t.addr)
     : escapeHtml("n/a");
 
-  const bestSizeText = bestPick
-    ? `$${bestPick.size.toFixed(2)} USDC`
-    : "n/a";
+  const bestSizeText = bestPick ? `$${bestPick.size.toFixed(2)} USDC` : "n/a";
 
   const riskText =
     Number.isFinite(bestAcrossAll) && bestAcrossAll < 0
@@ -824,7 +1191,7 @@ async function sendDemoSignalForChain(provider, chain, sym) {
     perSizeLines,
     windowText: "2–5 minutes",
     riskText,
-    isTest: true
+    isTest: true,
   });
 
   await tgBroadcast(msg);
@@ -848,7 +1215,9 @@ async function main() {
       const net = await provider.getNetwork();
       const rpcChain = Number(net.chainId);
       if (rpcChain !== chain.chainId) {
-        console.error(`RPC CHAIN_ID MISMATCH (${chain.key}): RPC=${rpcChain} EXPECTED=${chain.chainId} (fix RPC_URL_*)`);
+        console.error(
+          `RPC CHAIN_ID MISMATCH (${chain.key}): RPC=${rpcChain} EXPECTED=${chain.chainId} (fix RPC_URL_*)`
+        );
         continue;
       }
     } catch (e) {
@@ -862,7 +1231,7 @@ async function main() {
 
     // Demo once per manual run per chain
     if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
-      if (chain.key !== "polygon") continue; // тест только для Polygon
+      if (chain.key !== "polygon") continue;
       const tagKey = `demoSentTag:${chain.key}`;
       if (state.meta[tagKey] !== demoTag) {
         try {
@@ -882,7 +1251,12 @@ async function main() {
             writeState(state);
           }
         } catch (e) {
-          console.error("DEMO ERROR:", chain.key, e?.response?.status, e?.response?.data || e?.message || e);
+          console.error(
+            "DEMO ERROR:",
+            chain.key,
+            e?.response?.status,
+            e?.response?.data || e?.message || e
+          );
         }
       }
     }
@@ -908,12 +1282,16 @@ async function main() {
           r = await bestRouteForSize(chain, provider, sym, t.addr, size);
         } catch (e) {
           console.error(sym, "ROUTE ERROR:", chain.key, size, e?.message || e);
-          perSizeLines.push(`❌ <b>$${size} USDC input</b> → <b>—</b>`);
+          perSizeLines.push(
+            `❌ <b>$${size} USDC input</b> → <b>—</b>`
+          );
           continue;
         }
 
         const em = emojiForPct(r.pct);
-        const pStr = Number.isFinite(r.pct) ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%` : "—";
+        const pStr = Number.isFinite(r.pct)
+          ? `${r.pct >= 0 ? "+" : ""}${pct(r.pct, 2)}%`
+          : "—";
         perSizeLines.push(
           `${em} <b>$${size} USDC input</b> → <b>${pStr}</b>`
         );
@@ -926,7 +1304,6 @@ async function main() {
         }
       }
 
-      // refine best size по лучшему маршруту
       if (bestPick && Number.isFinite(bestAcrossAll)) {
         try {
           bestPick = await refineBestSize(chain, provider, stable, t.addr, bestPick);
@@ -938,7 +1315,6 @@ async function main() {
         }
       }
 
-      // Track window stats on primary key (по фактическому лучшему профиту)
       if (Number.isFinite(bestAcrossAll)) {
         pushSample(state.pairs[primaryKey], bestAcrossAll);
         updateWindowStats(state.pairs[primaryKey], bestAcrossAll);
@@ -951,7 +1327,13 @@ async function main() {
       }
 
       const bestRouteHtml = bestPick
-        ? bestRouteLinkHtml(chain, bestPick.buyVenue, bestPick.sellVenue, stable.addr, t.addr)
+        ? bestRouteLinkHtml(
+            chain,
+            bestPick.buyVenue,
+            bestPick.sellVenue,
+            stable.addr,
+            t.addr
+          )
         : escapeHtml("n/a");
 
       const bestSizeText = bestPick
@@ -970,7 +1352,7 @@ async function main() {
         perSizeLines,
         windowText,
         riskText,
-        isTest: false
+        isTest: false,
       });
 
       try {
@@ -979,7 +1361,9 @@ async function main() {
         const ts = nowSec();
         state.pairs[primaryKey].lastSentAt = ts;
         state.pairs[primaryKey].lastSentProfit = bestAcrossAll;
-        state.pairs[primaryKey].lastRoute = bestPick ? `${bestPick.buyVenue}->${bestPick.sellVenue}` : "";
+        state.pairs[primaryKey].lastRoute = bestPick
+          ? `${bestPick.buyVenue}->${bestPick.sellVenue}`
+          : "";
         state.meta.lastAnySentAt = ts;
 
         writeState(state);
