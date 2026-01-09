@@ -79,374 +79,653 @@ const SEND_DEMO_ON_MANUAL =
   String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
 // ---------- CHAINS / TOKENS ----------
-// здесь НЕТ условий вида "если нет ENV — сеть отключена",
-// кроме очевидного: если нет RPC, сеть просто не добавляем в список
+// ---------- CHAINS / TOKENS ----------
+// 16+ EVM сетей, ENV только как override, по умолчанию всё включено
 
 const CHAINS = [
+  // базовые (как было)
   {
     key: "polygon",
     name: "Polygon",
     chainId: 137,
-    rpcUrl: RPC_URL_POLYGON,
+    rpcUrl:
+      process.env.RPC_URL ||
+      process.env.RPC_POLYGON ||
+      "https://polygon-rpc.com",
   },
   {
     key: "base",
     name: "Base",
     chainId: 8453,
-    rpcUrl: RPC_URL_BASE || "",
+    rpcUrl:
+      process.env.RPC_URL_BASE ||
+      process.env.RPC_BASE ||
+      "https://mainnet.base.org",
   },
   {
     key: "arbitrum",
     name: "Arbitrum",
     chainId: 42161,
-    rpcUrl: RPC_URL_ARBITRUM || "",
+    rpcUrl:
+      process.env.RPC_URL_ARBITRUM ||
+      process.env.RPC_ARB ||
+      "https://arb1.arbitrum.io/rpc",
+  },
+
+  // расширенный набор сетей
+  {
+    key: "ethereum",
+    name: "Ethereum",
+    chainId: 1,
+    rpcUrl: process.env.RPC_ETHEREUM || "https://eth.llamarpc.com",
+  },
+  {
+    key: "optimism",
+    name: "Optimism",
+    chainId: 10,
+    rpcUrl: process.env.RPC_OPTIMISM || "https://mainnet.optimism.io",
+  },
+  {
+    key: "bsc",
+    name: "BNB Chain",
+    chainId: 56,
+    rpcUrl:
+      process.env.RPC_BSC || "https://bsc-dataseed.binance.org",
+  },
+  {
+    key: "avalanche",
+    name: "Avalanche",
+    chainId: 43114,
+    rpcUrl:
+      process.env.RPC_AVALANCHE ||
+      "https://api.avax.network/ext/bc/C/rpc",
+  },
+  {
+    key: "fantom",
+    name: "Fantom",
+    chainId: 250,
+    rpcUrl: process.env.RPC_FANTOM || "https://rpc.ftm.tools",
+  },
+  {
+    key: "gnosis",
+    name: "Gnosis",
+    chainId: 100,
+    rpcUrl:
+      process.env.RPC_GNOSIS || "https://rpc.gnosischain.com",
+  },
+  {
+    key: "zksync",
+    name: "zkSync Era",
+    chainId: 324,
+    rpcUrl:
+      process.env.RPC_ZKSYNC ||
+      "https://mainnet.era.zksync.io",
+  },
+  {
+    key: "linea",
+    name: "Linea",
+    chainId: 59144,
+    rpcUrl: process.env.RPC_LINEA || "https://rpc.linea.build",
+  },
+  {
+    key: "scroll",
+    name: "Scroll",
+    chainId: 534352,
+    rpcUrl: process.env.RPC_SCROLL || "https://rpc.scroll.io",
+  },
+  {
+    key: "polygon_zkevm",
+    name: "Polygon zkEVM",
+    chainId: 1101,
+    rpcUrl:
+      process.env.RPC_POLYGON_ZKEVM ||
+      "https://zkevm-rpc.com",
+  },
+  {
+    key: "mantle",
+    name: "Mantle",
+    chainId: 5000,
+    rpcUrl: process.env.RPC_MANTLE || "https://rpc.mantle.xyz",
+  },
+  {
+    key: "blast",
+    name: "Blast",
+    chainId: 81457,
+    rpcUrl: process.env.RPC_BLAST || "https://rpc.blast.io",
   },
 ].filter((c) => !!c.rpcUrl);
-// ---------- SUPER MEGA CHAIN+DEX CONFIG (16 chains, 50+ routers) ----------
-const MEGA_CHAINS = [
-  { key: "polygon",   name: "Polygon",        chainId: 137,   rpcUrl: "https://polygon-rpc.com" },
-  { key: "arbitrum",  name: "Arbitrum One",   chainId: 42161, rpcUrl: "https://arb1.arbitrum.io/rpc" },
-  { key: "base",      name: "Base",           chainId: 8453,  rpcUrl: "https://mainnet.base.org" },
-  { key: "optimism",  name: "Optimism",       chainId: 10,    rpcUrl: "https://mainnet.optimism.io" },
-  { key: "ethereum",  name: "Ethereum",       chainId: 1,     rpcUrl: "https://eth.llamarpc.com" },
-  { key: "bsc",       name: "BNB SmartChain", chainId: 56,    rpcUrl: "https://bsc-dataseed.binance.org" },
-  { key: "avax",      name: "Avalanche C",    chainId: 43114, rpcUrl: "https://api.avax.network/ext/bc/C/rpc" },
-  { key: "fantom",    name: "Fantom Opera",   chainId: 250,   rpcUrl: "https://rpc.ftm.tools" },
-  { key: "gnosis",    name: "Gnosis Chain",   chainId: 100,   rpcUrl: "https://rpc.gnosischain.com" },
-  { key: "cronos",    name: "Cronos",         chainId: 25,    rpcUrl: "https://evm.cronos.org" },
-  { key: "zksync",    name: "zkSync Era",     chainId: 324,   rpcUrl: "https://mainnet.era.zksync.io" },
-  { key: "linea",     name: "Linea",          chainId: 59144, rpcUrl: "https://rpc.linea.build" },
-  { key: "mantle",    name: "Mantle",         chainId: 5000,  rpcUrl: "https://rpc.mantle.xyz" },
-  { key: "scroll",    name: "Scroll",         chainId: 534352,rpcUrl: "https://rpc.scroll.io" },
-  { key: "mode",      name: "Mode",           chainId: 34443, rpcUrl: "https://mainnet.mode.network" },
-  { key: "kava",      name: "Kava EVM",       chainId: 2222,  rpcUrl: "https://evm.kava.io" }
-];
 
-const MEGA_DEX = {
-  polygon: {
-    QuickSwap:   "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff",
-    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
-    Curve:       "https://polygon.curve.fi",
-    Balancer:    "0x6317c5e82a06e1d8bf200d21f4510ac2c038ac81",
-    UniV3Quoter: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
-  },
-  arbitrum: {
-    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
-    Camelot:     "0x6EcCab422D763aC031210895C81787E87B43a652",
-    Curve:       "https://arbitrum.curve.fi",
-    Balancer:    "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-    UniV3Quoter: "0x0b0e3c8c90b2660e6e3a14f16b19df0c2f69bb70"
-  },
-  base: {
-    Aerodrome:   "0x9a76e1b83f1fcf04e3abf65c1dcaf7d50078aa19",
-    Sushi:       "0x1901f9cafb3ed52f9bbaa3d75bd9d1c3dcdd46c6",
-    Curve:       "https://base.curve.fi",
-    UniV3Quoter: "0xFfBf0d6F401A8a3F3D3b022cb35c50a6486Cc21"
-  },
-  optimism: {
-    Velodrome:   "0x1b8d7b76b7f630e2ea098c0920ce0d6878fa5826",
-    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
-    UniV3Quoter: "0xEcBE8dOTODOYOUFILLYOUROWN",
-    Curve:       "https://optimism.curve.fi"
-  },
-  ethereum: {
-    UniswapV2:   "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
-    Sushi:       "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",
-    Curve:       "https://curve.fi",
-    Balancer:    "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
-    UniV3Quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
-  }
-};
+// Токены по сетям. НИКАКИХ null — всё включено,
+// ENV только как override адреса.
 
-// Polygon tokens (ВСЕ включены, ENV только override адреса)
-const TOKENS_POLYGON = {
-  USDC: {
-    symbol: "USDC",
-    addr: (process.env.POLYGON_USDC ||
-      "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase(),
-    decimals: 6,
-  },
-  LINK: {
-    symbol: "LINK",
-    addr: (process.env.POLYGON_LINK ||
-      "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(),
-    decimals: 18,
-  },
-  WMATIC: {
-    symbol: "WMATIC",
-    addr: (process.env.POLYGON_WMATIC ||
-      "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
-    decimals: 18,
-  },
-  WETH: {
-    symbol: "WETH",
-    addr: (process.env.POLYGON_WETH ||
-      "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619").toLowerCase(),
-    decimals: 18,
-  },
-  AAVE: {
-    symbol: "AAVE",
-    addr: (process.env.POLYGON_AAVE ||
-      "0xD6DF932A45C0f255f85145f286eA0b292B21C90B").toLowerCase(),
-    decimals: 18,
-  },
-  USDT: {
-    symbol: "USDT",
-    addr: (process.env.POLYGON_USDT ||
-      "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(),
-    decimals: 6,
-  },
-  DAI: {
-    symbol: "DAI",
-    addr: (process.env.POLYGON_DAI ||
-      "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(),
-    decimals: 18,
-  },
-
-  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Polygon) — ВСЕ СРАЗУ
-  WBTC: {
-    symbol: "WBTC",
-    addr: (process.env.POLYGON_WBTC ||
-      "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(),
-    decimals: 8,
-  },
-  UNI: {
-    symbol: "UNI",
-    addr: (process.env.POLYGON_UNI ||
-      "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(),
-    decimals: 18,
-  },
-  CRV: {
-    symbol: "CRV",
-    addr: (process.env.POLYGON_CRV ||
-      "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(),
-    decimals: 18,
-  },
-  SNX: {
-    symbol: "SNX",
-    addr: (process.env.POLYGON_SNX ||
-      "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(),
-    decimals: 18,
-  },
-  BAL: {
-    symbol: "BAL",
-    addr: (process.env.POLYGON_BAL ||
-      "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(),
-    decimals: 18,
-  },
-  COMP: {
-    symbol: "COMP",
-    addr: (process.env.POLYGON_COMP ||
-      "0x8505b9d2254a7ae468c0e9dd10ccea3a837aef5c").toLowerCase(),
-    decimals: 18,
-  },
-  MKR: {
-    symbol: "MKR",
-    addr: (process.env.POLYGON_MKR ||
-      "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(),
-    decimals: 18,
-  },
-  SUSHI: {
-    symbol: "SUSHI",
-    addr: (process.env.POLYGON_SUSHI ||
-      "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(),
-    decimals: 18,
-  },
-
-  MATIC: {
-    symbol: "MATIC",
-    addr: (process.env.POLYGON_MATIC ||
-      "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
-    decimals: 18,
-  },
-};
-
-// Base tokens — БЕЗ null, все сразу, ENV только override
-const TOKENS_BASE = {
-  USDC: {
-    symbol: "USDC",
-    addr: (process.env.BASE_USDC ||
-      "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913").toLowerCase(),
-    decimals: 6,
-  },
-  WETH: {
-    symbol: "WETH",
-    addr: (process.env.BASE_WETH ||
-      "0x4200000000000000000000000000000000000006").toLowerCase(),
-    decimals: 18,
-  },
-  USDT: {
-    symbol: "USDT",
-    addr: (process.env.BASE_USDT ||
-      "0x568B2a4fFf0315E6Bcf25384f0B0a1f0a63b63d0").toLowerCase(), // примерный адрес, при желании переопредели ENV’ом
-    decimals: 6,
-  },
-  DAI: {
-    symbol: "DAI",
-    addr: (process.env.BASE_DAI ||
-      "0xd3eBD8155D49F794e79448a5e41F7A3E663BdF1D").toLowerCase(), // тоже можешь переопределить
-    decimals: 18,
-  },
-  ARB: {
-    symbol: "ARB",
-    addr: (process.env.BASE_ARB ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(), // если реально нужен ARB на Base — ставишь свой адрес
-    decimals: 18,
-  },
-
-  WBTC: {
-    symbol: "WBTC",
-    addr: (process.env.BASE_WBTC ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 8,
-  },
-  UNI: {
-    symbol: "UNI",
-    addr: (process.env.BASE_UNI ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  CRV: {
-    symbol: "CRV",
-    addr: (process.env.BASE_CRV ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  SNX: {
-    symbol: "SNX",
-    addr: (process.env.BASE_SNX ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  BAL: {
-    symbol: "BAL",
-    addr: (process.env.BASE_BAL ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  COMP: {
-    symbol: "COMP",
-    addr: (process.env.BASE_COMP ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  MKR: {
-    symbol: "MKR",
-    addr: (process.env.BASE_MKR ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-  SUSHI: {
-    symbol: "SUSHI",
-    addr: (process.env.BASE_SUSHI ||
-      "0x0000000000000000000000000000000000000000").toLowerCase(),
-    decimals: 18,
-  },
-};
-
-// Arbitrum tokens — ВСЕ сразу, ENV только override
-const TOKENS_ARBITRUM = {
-  USDC: {
-    symbol: "USDC",
-    addr: (process.env.ARB_USDC ||
-      "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(),
-    decimals: 6,
-  },
-  WETH: {
-    symbol: "WETH",
-    addr: (process.env.ARB_WETH ||
-      "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(),
-    decimals: 18,
-  },
-  USDT: {
-    symbol: "USDT",
-    addr: (process.env.ARB_USDT ||
-      "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(),
-    decimals: 6,
-  },
-  DAI: {
-    symbol: "DAI",
-    addr: (process.env.ARB_DAI ||
-      "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(),
-    decimals: 18,
-  },
-  ARB: {
-    symbol: "ARB",
-    addr: (process.env.ARB_ARB ||
-      "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(),
-    decimals: 18,
-  },
-
-  LINK: {
-    symbol: "LINK",
-    addr: (process.env.ARB_LINK ||
-      "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4").toLowerCase(),
-    decimals: 18,
-  },
-  AAVE: {
-    symbol: "AAVE",
-    addr: (process.env.ARB_AAVE ||
-      "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(),
-    decimals: 18,
-  },
-
-  WBTC: {
-    symbol: "WBTC",
-    addr: (process.env.ARB_WBTC ||
-      "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(),
-    decimals: 8,
-  },
-  UNI: {
-    symbol: "UNI",
-    addr: (process.env.ARB_UNI ||
-      "0xfa7F8980B0f1E64A2062791cc3b0871572f1F7f0").toLowerCase(),
-    decimals: 18,
-  },
-  CRV: {
-    symbol: "CRV",
-    addr: (process.env.ARB_CRV ||
-      "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(),
-    decimals: 18,
-  },
-  SNX: {
-    symbol: "SNX",
-    addr: (process.env.ARB_SNX ||
-      "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(),
-    decimals: 18,
-  },
-  BAL: {
-    symbol: "BAL",
-    addr: (process.env.ARB_BAL ||
-      "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(),
-    decimals: 18,
-  },
-  COMP: {
-    symbol: "COMP",
-    addr: (process.env.ARB_COMP ||
-      "0xeCe2B6E5B563E9F4c2470Ff712F0C48E7893Efc0").toLowerCase(),
-    decimals: 18,
-  },
-  MKR: {
-    symbol: "MKR",
-    addr: (process.env.ARB_MKR ||
-      "0x2E13e5eC7C6D2a5Ce094b6dA0FbA7740F9Ed79F1").toLowerCase(),
-    decimals: 18,
-  },
-  SUSHI: {
-    symbol: "SUSHI",
-    addr: (process.env.ARB_SUSHI ||
-      "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(),
-    decimals: 18,
-  },
-};
-
+// ---------- POLYGON ----------
 const TOKENS_BY_CHAIN = {
-  polygon: TOKENS_POLYGON,
-  base: TOKENS_BASE,
-  arbitrum: TOKENS_ARBITRUM,
+  polygon: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.POLYGON_USDC ||
+          "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase(),
+      decimals: 6,
+    },
+    LINK: {
+      symbol: "LINK",
+      addr:
+        (process.env.POLYGON_LINK ||
+          "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(),
+      decimals: 18,
+    },
+    WMATIC: {
+      symbol: "WMATIC",
+      addr:
+        (process.env.POLYGON_WMATIC ||
+          "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
+      decimals: 18,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.POLYGON_WETH ||
+          "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619").toLowerCase(),
+      decimals: 18,
+    },
+    AAVE: {
+      symbol: "AAVE",
+      addr:
+        (process.env.POLYGON_AAVE ||
+          "0xD6DF932A45C0f255f85145f286eA0b292B21C90B").toLowerCase(),
+      decimals: 18,
+    },
+    USDT: {
+      symbol: "USDT",
+      addr:
+        (process.env.POLYGON_USDT ||
+          "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(),
+      decimals: 6,
+    },
+    DAI: {
+      symbol: "DAI",
+      addr:
+        (process.env.POLYGON_DAI ||
+          "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(),
+      decimals: 18,
+    },
+    WBTC: {
+      symbol: "WBTC",
+      addr:
+        (process.env.POLYGON_WBTC ||
+          "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(),
+      decimals: 8,
+    },
+    UNI: {
+      symbol: "UNI",
+      addr:
+        (process.env.POLYGON_UNI ||
+          "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(),
+      decimals: 18,
+    },
+    CRV: {
+      symbol: "CRV",
+      addr:
+        (process.env.POLYGON_CRV ||
+          "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.POLYGON_SNX ||
+          "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(),
+      decimals: 18,
+    },
+    BAL: {
+      symbol: "BAL",
+      addr:
+        (process.env.POLYGON_BAL ||
+          "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(),
+      decimals: 18,
+    },
+    COMP: {
+      symbol: "COMP",
+      addr:
+        (process.env.POLYGON_COMP ||
+          "0x8505b9d2254a7ae468c0e9dd10ccea3a837aef5c").toLowerCase(),
+      decimals: 18,
+    },
+    MKR: {
+      symbol: "MKR",
+      addr:
+        (process.env.POLYGON_MKR ||
+          "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(),
+      decimals: 18,
+    },
+    SUSHI: {
+      symbol: "SUSHI",
+      addr:
+        (process.env.POLYGON_SUSHI ||
+          "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(),
+      decimals: 18,
+    },
+    MATIC: {
+      symbol: "MATIC",
+      addr:
+        (process.env.POLYGON_MATIC ||
+          "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  // ---------- BASE ----------
+  base: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.BASE_USDC ||
+          "0x833589fCD6eDb6E08f4c7C32D4f71b54bda02913").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.BASE_WETH ||
+          "0x4200000000000000000000000000000000000006").toLowerCase(),
+      decimals: 18,
+    },
+    USDT: {
+      symbol: "USDT",
+      addr:
+        (process.env.BASE_USDT ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    DAI: {
+      symbol: "DAI",
+      addr:
+        (process.env.BASE_DAI ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    ARB: {
+      symbol: "ARB",
+      addr:
+        (process.env.BASE_ARB ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    WBTC: {
+      symbol: "WBTC",
+      addr:
+        (process.env.BASE_WBTC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 8,
+    },
+    UNI: {
+      symbol: "UNI",
+      addr:
+        (process.env.BASE_UNI ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    CRV: {
+      symbol: "CRV",
+      addr:
+        (process.env.BASE_CRV ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.BASE_SNX ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    BAL: {
+      symbol: "BAL",
+      addr:
+        (process.env.BASE_BAL ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    COMP: {
+      symbol: "COMP",
+      addr:
+        (process.env.BASE_COMP ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    MKR: {
+      symbol: "MKR",
+      addr:
+        (process.env.BASE_MKR ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+    SUSHI: {
+      symbol: "SUSHI",
+      addr:
+        (process.env.BASE_SUSHI ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  // ---------- ARBITRUM ----------
+  arbitrum: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.ARB_USDC ||
+          "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.ARB_WETH ||
+          "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(),
+      decimals: 18,
+    },
+    USDT: {
+      symbol: "USDT",
+      addr:
+        (process.env.ARB_USDT ||
+          "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(),
+      decimals: 6,
+    },
+    DAI: {
+      symbol: "DAI",
+      addr:
+        (process.env.ARB_DAI ||
+          "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(),
+      decimals: 18,
+    },
+    ARB: {
+      symbol: "ARB",
+      addr:
+        (process.env.ARB_ARB ||
+          "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(),
+      decimals: 18,
+    },
+    LINK: {
+      symbol: "LINK",
+      addr:
+        (process.env.ARB_LINK ||
+          "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4").toLowerCase(),
+      decimals: 18,
+    },
+    AAVE: {
+      symbol: "AAVE",
+      addr:
+        (process.env.ARB_AAVE ||
+          "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(),
+      decimals: 18,
+    },
+    WBTC: {
+      symbol: "WBTC",
+      addr:
+        (process.env.ARB_WBTC ||
+          "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(),
+      decimals: 8,
+    },
+    UNI: {
+      symbol: "UNI",
+      addr:
+        (process.env.ARB_UNI ||
+          "0xfa7F8980B0f1E64A2062791cc3b0871572f1F7f0").toLowerCase(),
+      decimals: 18,
+    },
+    CRV: {
+      symbol: "CRV",
+      addr:
+        (process.env.ARB_CRV ||
+          "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.ARB_SNX ||
+          "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(),
+      decimals: 18,
+    },
+    BAL: {
+      symbol: "BAL",
+      addr:
+        (process.env.ARB_BAL ||
+          "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(),
+      decimals: 18,
+    },
+    COMP: {
+      symbol: "COMP",
+      addr:
+        (process.env.ARB_COMP ||
+          "0xeCe2B6E5B563E9F4c2470Ff712F0C48E7893Efc0").toLowerCase(),
+      decimals: 18,
+    },
+    MKR: {
+      symbol: "MKR",
+      addr:
+        (process.env.ARB_MKR ||
+          "0x2E13e5eC7C6D2a5Ce094b6dA0FbA7740F9Ed79F1").toLowerCase(),
+      decimals: 18,
+    },
+    SUSHI: {
+      symbol: "SUSHI",
+      addr:
+        (process.env.ARB_SUSHI ||
+          "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  // Остальные сети (минимум USDC/WETH; дальше можно расширять по аналогии)
+  ethereum: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.ETH_USDC ||
+          "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.ETH_WETH ||
+          "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  optimism: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.OP_USDC ||
+          "0x7F5c764cBc14f9669B88837ca1490cCa17c31607").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.OP_WETH ||
+          "0x4200000000000000000000000000000000000006").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  bsc: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.BSC_USDC ||
+          "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d").toLowerCase(),
+      decimals: 18,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.BSC_WETH ||
+          "0x2170ed0880ac9a755fd29b2688956bd959f933f8").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  avalanche: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.AVAX_USDC ||
+          "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.AVAX_WETH ||
+          "0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  fantom: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.FTM_USDC ||
+          "0x04068DA6C83AFCFA0e13ba15A6696662335D5B75").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.FTM_WETH ||
+          "0x74b23882a30290451A17c44f4F05243B6b58C76d").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  gnosis: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.GNO_USDC ||
+          "0xddafbb505ad214d7b80b1f830fccc89b60fb7a83").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.GNO_WETH ||
+          "0x6a023ccd1ff6f2045c3309768ead9e68f978f6e1").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  zksync: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.ZKSYNC_USDC ||
+          "0x3355df6D4c9C3035724Fd0e3914dE96A5a83aaf4").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.ZKSYNC_WETH ||
+          "0x5AEA5775959fbc2557Cc8789bC1bf90A239D9a91").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  linea: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.LINEA_USDC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.LINEA_WETH ||
+          "0xe5d7c2a44ffddf6b295a15c148167daaaf5cf34f").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  scroll: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.SCROLL_USDC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.SCROLL_WETH ||
+          "0x5300000000000000000000000000000000000004").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  polygon_zkevm: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.PZK_USDC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.PZK_WETH ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  mantle: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.MANTLE_USDC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.MANTLE_WETH ||
+          "0xdEAddEaDdeadDEadDEADDEAddEADDEAddead1111").toLowerCase(),
+      decimals: 18,
+    },
+  },
+
+  blast: {
+    USDC: {
+      symbol: "USDC",
+      addr:
+        (process.env.BLAST_USDC ||
+          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      decimals: 6,
+    },
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.BLAST_WETH ||
+          "0x4300000000000000000000000000000000000004").toLowerCase(),
+      decimals: 18,
+    },
+  },
 };
 
-// WATCH — по умолчанию весь набор
+// WATCH — общий список монет (там, где есть в TOKENS_BY_CHAIN)
 const WATCH = String(
   process.env.WATCH ||
     "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI"
@@ -455,25 +734,75 @@ const WATCH = String(
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
-// флаг для возможного отключения агрегаторов (Odos/Curve) через ENV
+// флаг для возможного отключения агрегаторов (Odos/Curve)
 const DISABLE_AGGREGATORS =
   String(process.env.DISABLE_AGGREGATORS || "0") === "1";
 
 // ---------- VENUES / ROUTERS / QUOTERS ----------
-// никакой логики "если нет ENV — выключено":
-// есть дефолтные адреса, ENV только override
 
 const UNI_QUOTER_V2_BY_CHAIN = {
-  polygon: (process.env.UNI_QUOTER_V2_POLYGON ||
+  polygon: (
+    process.env.UNI_QUOTER_V2_POLYGON ||
     process.env.UNI_QUOTER_V2 ||
-    "0x61fFE014bA17989E743c5F6cB21bF9697530B21e" // Uniswap V3 Quoter on Polygon
+    "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
   ).toLowerCase(),
-  base: (process.env.UNI_QUOTER_V2_BASE ||
-    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6" // Uniswap V3 Quoter on Base (shared)
+  base: (
+    process.env.UNI_QUOTER_V2_BASE ||
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
   ).toLowerCase(),
-  arbitrum: (process.env.UNI_QUOTER_V2_ARBITRUM ||
+  arbitrum: (
+    process.env.UNI_QUOTER_V2_ARBITRUM ||
     process.env.UNI_QUOTER_V2_ARB ||
-    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6" // Uniswap V3 Quoter on Arbitrum
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+  ).toLowerCase(),
+
+  ethereum: (
+    process.env.UNI_QUOTER_V2_ETH ||
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+  ).toLowerCase(),
+  optimism: (
+    process.env.UNI_QUOTER_V2_OP ||
+    "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+  ).toLowerCase(),
+  bsc: (
+    process.env.UNI_QUOTER_V2_BSC ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  avalanche: (
+    process.env.UNI_QUOTER_V2_AVAX ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  fantom: (
+    process.env.UNI_QUOTER_V2_FTM ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  gnosis: (
+    process.env.UNI_QUOTER_V2_GNO ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  zksync: (
+    process.env.UNI_QUOTER_V2_ZKSYNC ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  linea: (
+    process.env.UNI_QUOTER_V2_LINEA ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  scroll: (
+    process.env.UNI_QUOTER_V2_SCROLL ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  polygon_zkevm: (
+    process.env.UNI_QUOTER_V2_PZK ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  mantle: (
+    process.env.UNI_QUOTER_V2_MANTLE ||
+    "0x0000000000000000000000000000000000000000"
+  ).toLowerCase(),
+  blast: (
+    process.env.UNI_QUOTER_V2_BLAST ||
+    "0x0000000000000000000000000000000000000000"
   ).toLowerCase(),
 };
 
@@ -482,28 +811,109 @@ const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
+// V2 роутеры по сетям. Если адрес = 0x000... — просто не будет использован.
 const ROUTERS_V2_BY_CHAIN = {
   polygon: {
-    Sushi: (process.env.SUSHI_ROUTER ||
-      "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506").toLowerCase(),
-    QuickSwap: (process.env.QUICKSWAP_ROUTER ||
-      "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff").toLowerCase(),
+    Sushi: (
+      process.env.SUSHI_ROUTER_POLYGON ||
+      "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"
+    ).toLowerCase(),
+    QuickSwap: (
+      process.env.QUICKSWAP_ROUTER_POLYGON ||
+      "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"
+    ).toLowerCase(),
   },
   base: {
-    Aerodrome: (process.env.AERODROME_ROUTER ||
-      "0x2eAf6D9fE94cB6F445dbB7cBf0b9B7C189C1A4bE").toLowerCase(), // актуальный роутер Aerodrome V2
+    Aerodrome: (
+      process.env.AERODROME_ROUTER ||
+      "0x2eAf6D9fE94cB6F445dbB7cBf0b9B7C189C1A4bE"
+    ).toLowerCase(),
   },
   arbitrum: {
-    Camelot: (process.env.CAMELOT_ROUTER ||
-      "0xC873fEcbd354f5A56E00E710B90EF4201db2448d").toLowerCase(), // Camelot V2 router
+    Camelot: (
+      process.env.CAMELOT_ROUTER ||
+      "0xC873fEcbd354f5A56E00E710B90EF4201db2448d"
+    ).toLowerCase(),
+  },
+
+  ethereum: {
+    Sushi: (
+      process.env.SUSHI_ROUTER_ETH ||
+      "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"
+    ).toLowerCase(),
+  },
+  optimism: {
+    Velodrome: (
+      process.env.VELODROME_ROUTER ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  bsc: {
+    Pancake: (
+      process.env.PANCAKE_ROUTER ||
+      "0x10ED43C718714eb63d5aA57B78B54704E256024E"
+    ).toLowerCase(),
+  },
+  avalanche: {
+    TraderJoe: (
+      process.env.TRADERJOE_ROUTER_AVAX ||
+      "0x60aE616a2155Ee3d9A68541Ba4544862310933d4"
+    ).toLowerCase(),
+  },
+  fantom: {
+    Spooky: (
+      process.env.SPOOKY_ROUTER ||
+      "0xF491e7B69E4244ad4002BC14e878a34207E38c29"
+    ).toLowerCase(),
+  },
+  gnosis: {
+    Swapr: (
+      process.env.SWAPR_ROUTER_GNO ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  zksync: {
+    SyncSwap: (
+      process.env.SYNCSWAP_ROUTER ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  linea: {
+    LineaSwap: (
+      process.env.LINEASWAP_ROUTER ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  scroll: {
+    ScrollSwap: (
+      process.env.SCROLLSWAP_ROUTER ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  polygon_zkevm: {
+    QuickSwap: (
+      process.env.QUICKSWAP_ROUTER_PZK ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  mantle: {
+    FusionX: (
+      process.env.FUSIONX_ROUTER_MANTLE ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
+  },
+  blast: {
+    Thruster: (
+      process.env.THRUSTER_ROUTER_BLAST ||
+      "0x0000000000000000000000000000000000000000"
+    ).toLowerCase(),
   },
 };
 
 const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
-
-// таймаут для Odos запросов (меньше 25c, чтобы не виснуть)
 const ODOS_TIMEOUT_MS = Number(process.env.ODOS_TIMEOUT_MS || 8000);
+
 
 // ---------- STATE ----------
 const STATE_PATH = path.join(__dirname, "state.json");
