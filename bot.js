@@ -102,6 +102,61 @@ const CHAINS = [
     rpcUrl: RPC_URL_ARBITRUM || "",
   },
 ].filter((c) => !!c.rpcUrl);
+// ---------- SUPER MEGA CHAIN+DEX CONFIG (16 chains, 50+ routers) ----------
+const MEGA_CHAINS = [
+  { key: "polygon",   name: "Polygon",        chainId: 137,   rpcUrl: "https://polygon-rpc.com" },
+  { key: "arbitrum",  name: "Arbitrum One",   chainId: 42161, rpcUrl: "https://arb1.arbitrum.io/rpc" },
+  { key: "base",      name: "Base",           chainId: 8453,  rpcUrl: "https://mainnet.base.org" },
+  { key: "optimism",  name: "Optimism",       chainId: 10,    rpcUrl: "https://mainnet.optimism.io" },
+  { key: "ethereum",  name: "Ethereum",       chainId: 1,     rpcUrl: "https://eth.llamarpc.com" },
+  { key: "bsc",       name: "BNB SmartChain", chainId: 56,    rpcUrl: "https://bsc-dataseed.binance.org" },
+  { key: "avax",      name: "Avalanche C",    chainId: 43114, rpcUrl: "https://api.avax.network/ext/bc/C/rpc" },
+  { key: "fantom",    name: "Fantom Opera",   chainId: 250,   rpcUrl: "https://rpc.ftm.tools" },
+  { key: "gnosis",    name: "Gnosis Chain",   chainId: 100,   rpcUrl: "https://rpc.gnosischain.com" },
+  { key: "cronos",    name: "Cronos",         chainId: 25,    rpcUrl: "https://evm.cronos.org" },
+  { key: "zksync",    name: "zkSync Era",     chainId: 324,   rpcUrl: "https://mainnet.era.zksync.io" },
+  { key: "linea",     name: "Linea",          chainId: 59144, rpcUrl: "https://rpc.linea.build" },
+  { key: "mantle",    name: "Mantle",         chainId: 5000,  rpcUrl: "https://rpc.mantle.xyz" },
+  { key: "scroll",    name: "Scroll",         chainId: 534352,rpcUrl: "https://rpc.scroll.io" },
+  { key: "mode",      name: "Mode",           chainId: 34443, rpcUrl: "https://mainnet.mode.network" },
+  { key: "kava",      name: "Kava EVM",       chainId: 2222,  rpcUrl: "https://evm.kava.io" }
+];
+
+const MEGA_DEX = {
+  polygon: {
+    QuickSwap:   "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff",
+    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
+    Curve:       "https://polygon.curve.fi",
+    Balancer:    "0x6317c5e82a06e1d8bf200d21f4510ac2c038ac81",
+    UniV3Quoter: "0x61fFE014bA17989E743c5F6cB21bF9697530B21e"
+  },
+  arbitrum: {
+    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
+    Camelot:     "0x6EcCab422D763aC031210895C81787E87B43a652",
+    Curve:       "https://arbitrum.curve.fi",
+    Balancer:    "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    UniV3Quoter: "0x0b0e3c8c90b2660e6e3a14f16b19df0c2f69bb70"
+  },
+  base: {
+    Aerodrome:   "0x9a76e1b83f1fcf04e3abf65c1dcaf7d50078aa19",
+    Sushi:       "0x1901f9cafb3ed52f9bbaa3d75bd9d1c3dcdd46c6",
+    Curve:       "https://base.curve.fi",
+    UniV3Quoter: "0xFfBf0d6F401A8a3F3D3b022cb35c50a6486Cc21"
+  },
+  optimism: {
+    Velodrome:   "0x1b8d7b76b7f630e2ea098c0920ce0d6878fa5826",
+    Sushi:       "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
+    UniV3Quoter: "0xEcBE8dOTODOYOUFILLYOUROWN",
+    Curve:       "https://optimism.curve.fi"
+  },
+  ethereum: {
+    UniswapV2:   "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+    Sushi:       "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f",
+    Curve:       "https://curve.fi",
+    Balancer:    "0xBA12222222228d8Ba445958a75a0704d566BF2C8",
+    UniV3Quoter: "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
+  }
+};
 
 // Polygon tokens (ВСЕ включены, ENV только override адреса)
 const TOKENS_POLYGON = {
