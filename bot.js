@@ -1,5 +1,5 @@
 // bot.js (CommonJS)
-// Polygon/Base/Arbitrum arb notifier (multi-chain, multi-venue):
+// Multi-chain arb notifier (16+ EVM chains, multi-venue):
 // BUY  = best venue quote (STABLE -> COIN)
 // SELL = best venue quote (COIN -> STABLE)
 
@@ -8,22 +8,14 @@ const path = require("path");
 const axios = require("axios");
 const { ethers } = require("ethers");
 
-// ---------- ENV (минимум, только то, что реально нужно) ----------
+// ---------- ENV ----------
 const BOT_TOKEN =
   process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.tg_token;
 const CHAT_ID_RAW =
   process.env.CHAT_ID || process.env.TG_CHAT_ID || process.env.tg_chat_id;
 
-// RPC: без этого никак — сюда ты ставишь свои RPC
-const RPC_URL_POLYGON = process.env.RPC_URL || process.env.RPC_POLYGON;
-const RPC_URL_BASE = process.env.RPC_URL_BASE || process.env.RPC_BASE;
-const RPC_URL_ARBITRUM =
-  process.env.RPC_URL_ARBITRUM || process.env.RPC_ARB || process.env.RPC_ARBITRUM;
-
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN missing");
 if (!CHAT_ID_RAW) throw new Error("CHAT_ID missing");
-if (!RPC_URL_POLYGON) throw new Error("RPC_URL_POLYGON missing (Polygon RPC)");
-// Base и Arbitrum опциональны как сети, но если rpc задан — сеть включится
 
 const CHAT_IDS = String(CHAT_ID_RAW)
   .split(",")
@@ -35,55 +27,43 @@ if (!CHAT_IDS.length)
   throw new Error("CHAT_ID parsed empty (must be numeric chat id)");
 
 // ---------- CONFIG ----------
-// фиксированные объёмы: 100, 1000, 5000
 const SIZES = String(process.env.SIZES || "100,1000,5000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// режим работы (обычный / агрессивный)
 const MODE = String(process.env.MODE || "normal"); // "normal" | "aggressive"
 
-// минимальный профит для сигнала (по умолчанию 0.4%)
 let MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.4);
 let PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.25);
 let COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 120);
 let BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 1.0);
 
 if (MODE === "aggressive") {
-  // агрессивные дефолты (можешь перебить ENV’ом)
   MIN_PROFIT_PCT = Number(process.env.MIN_PROFIT_PCT || 0.4);
   PROFIT_STEP_PCT = Number(process.env.PROFIT_STEP_PCT || 0.1);
   COOLDOWN_SEC = Number(process.env.COOLDOWN_SEC || 60);
   BIG_JUMP_BYPASS = Number(process.env.BIG_JUMP_BYPASS || 0.3);
 }
 
-// “Execution window”
 const QUOTE_TTL_SEC = Number(process.env.QUOTE_TTL_SEC || 120);
 
-// Slippage haircuts
 const SLIPPAGE_BUY_PCT = Number(process.env.SLIPPAGE_BUY_PCT || 0.1);
 const SLIPPAGE_SELL_PCT = Number(process.env.SLIPPAGE_SELL_PCT || 0.1);
 
-// Gas model per swap leg (USDC)
 const GAS_USDC_V2 = Number(process.env.GAS_USDC_V2 || 0.05);
 const GAS_USDC_UNI = Number(process.env.GAS_USDC_UNI || 0.05);
 const GAS_USDC_ODOS = Number(process.env.GAS_USDC_ODOS || 0.05);
 
-// диапазон поиска лучшего размера
 const MIN_SIZE_USDC = Number(process.env.MIN_SIZE_USDC || 50);
 const MAX_SIZE_USDC = Number(process.env.MAX_SIZE_USDC || 5000);
 
-// Demo behavior
 const SEND_DEMO_ON_MANUAL =
   String(process.env.SEND_DEMO_ON_MANUAL || "1") === "1";
 
-// ---------- CHAINS / TOKENS ----------
-// ---------- CHAINS / TOKENS ----------
-// 16+ EVM сетей, ENV только как override, по умолчанию всё включено
-
+// ---------- CHAINS ----------
 const CHAINS = [
-  // базовые (как было)
+  // core
   {
     key: "polygon",
     name: "Polygon",
@@ -104,7 +84,7 @@ const CHAINS = [
   },
   {
     key: "arbitrum",
-    name: "Arbitrum",
+    name: "Arbitrum One",
     chainId: 42161,
     rpcUrl:
       process.env.RPC_URL_ARBITRUM ||
@@ -112,7 +92,7 @@ const CHAINS = [
       "https://arb1.arbitrum.io/rpc",
   },
 
-  // расширенный набор сетей
+  // extra L1 / L2
   {
     key: "ethereum",
     name: "Ethereum",
@@ -129,8 +109,7 @@ const CHAINS = [
     key: "bsc",
     name: "BNB Chain",
     chainId: 56,
-    rpcUrl:
-      process.env.RPC_BSC || "https://bsc-dataseed.binance.org",
+    rpcUrl: process.env.RPC_BSC || "https://bsc-dataseed.binance.org",
   },
   {
     key: "avalanche",
@@ -150,8 +129,7 @@ const CHAINS = [
     key: "gnosis",
     name: "Gnosis",
     chainId: 100,
-    rpcUrl:
-      process.env.RPC_GNOSIS || "https://rpc.gnosischain.com",
+    rpcUrl: process.env.RPC_GNOSIS || "https://rpc.gnosischain.com",
   },
   {
     key: "zksync",
@@ -195,46 +173,21 @@ const CHAINS = [
   },
 ].filter((c) => !!c.rpcUrl);
 
-// Токены по сетям. НИКАКИХ null — всё включено,
-// ENV только как override адреса.
+// ---------- TOKENS ----------
+// Все core токены с реальными дефолтами.
+// Все дополнительные из твоего списка — через ENV, без 0x0000…
+// Если addr пустой, токен просто игнорится (ниже в main я это учёл).
 
-// ---------- POLYGON ----------
 const TOKENS_BY_CHAIN = {
+  // ----- POLYGON -----
   polygon: {
+    // stable
     USDC: {
       symbol: "USDC",
       addr:
         (process.env.POLYGON_USDC ||
           "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174").toLowerCase(),
       decimals: 6,
-    },
-    LINK: {
-      symbol: "LINK",
-      addr:
-        (process.env.POLYGON_LINK ||
-          "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(),
-      decimals: 18,
-    },
-    WMATIC: {
-      symbol: "WMATIC",
-      addr:
-        (process.env.POLYGON_WMATIC ||
-          "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
-      decimals: 18,
-    },
-    WETH: {
-      symbol: "WETH",
-      addr:
-        (process.env.POLYGON_WETH ||
-          "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619").toLowerCase(),
-      decimals: 18,
-    },
-    AAVE: {
-      symbol: "AAVE",
-      addr:
-        (process.env.POLYGON_AAVE ||
-          "0xD6DF932A45C0f255f85145f286eA0b292B21C90B").toLowerCase(),
-      decimals: 18,
     },
     USDT: {
       symbol: "USDT",
@@ -250,12 +203,54 @@ const TOKENS_BY_CHAIN = {
           "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(),
       decimals: 18,
     },
+    FRAX: {
+      symbol: "FRAX",
+      addr: (process.env.POLYGON_FRAX || "").toLowerCase(),
+      decimals: 18,
+    },
+    TUSD: {
+      symbol: "TUSD",
+      addr: (process.env.POLYGON_TUSD || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    // majors
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.POLYGON_WETH ||
+          "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619").toLowerCase(),
+      decimals: 18,
+    },
+    WMATIC: {
+      symbol: "WMATIC",
+      addr:
+        (process.env.POLYGON_WMATIC ||
+          "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270").toLowerCase(),
+      decimals: 18,
+    },
     WBTC: {
       symbol: "WBTC",
       addr:
         (process.env.POLYGON_WBTC ||
           "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(),
       decimals: 8,
+    },
+
+    // bluechips
+    LINK: {
+      symbol: "LINK",
+      addr:
+        (process.env.POLYGON_LINK ||
+          "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39").toLowerCase(),
+      decimals: 18,
+    },
+    AAVE: {
+      symbol: "AAVE",
+      addr:
+        (process.env.POLYGON_AAVE ||
+          "0xD6DF932A45C0f255f85145f286eA0b292B21C90B").toLowerCase(),
+      decimals: 18,
     },
     UNI: {
       symbol: "UNI",
@@ -271,18 +266,18 @@ const TOKENS_BY_CHAIN = {
           "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(),
       decimals: 18,
     },
-    SNX: {
-      symbol: "SNX",
-      addr:
-        (process.env.POLYGON_SNX ||
-          "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(),
-      decimals: 18,
-    },
     BAL: {
       symbol: "BAL",
       addr:
         (process.env.POLYGON_BAL ||
           "0x9a71012b13ca4d3d0cdc72a177df3ef03b0e76a3").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.POLYGON_SNX ||
+          "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(),
       decimals: 18,
     },
     COMP: {
@@ -299,11 +294,70 @@ const TOKENS_BY_CHAIN = {
           "0x6f7C932e7684666C9fd1d44527765433e01fF61d").toLowerCase(),
       decimals: 18,
     },
+
+    // extra liquidity
     SUSHI: {
       symbol: "SUSHI",
       addr:
         (process.env.POLYGON_SUSHI ||
           "0x0b3F868E0BE5597D5DB7fEB59E1CADBb0fdDa50a").toLowerCase(),
+      decimals: 18,
+    },
+    QUICK: {
+      symbol: "QUICK",
+      addr: (process.env.POLYGON_QUICK || "").toLowerCase(),
+      decimals: 18,
+    },
+    JOE: {
+      symbol: "JOE",
+      addr: (process.env.POLYGON_JOE || "").toLowerCase(),
+      decimals: 18,
+    },
+    CAKE: {
+      symbol: "CAKE",
+      addr: (process.env.POLYGON_CAKE || "").toLowerCase(),
+      decimals: 18,
+    },
+    PENDLE: {
+      symbol: "PENDLE",
+      addr: (process.env.POLYGON_PENDLE || "").toLowerCase(),
+      decimals: 18,
+    },
+    GMX: {
+      symbol: "GMX",
+      addr: (process.env.POLYGON_GMX || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    // majors list extras
+    WAVAX: {
+      symbol: "WAVAX",
+      addr: (process.env.POLYGON_WAVAX || "").toLowerCase(),
+      decimals: 18,
+    },
+    WBNB: {
+      symbol: "WBNB",
+      addr: (process.env.POLYGON_WBNB || "").toLowerCase(),
+      decimals: 18,
+    },
+    WFTM: {
+      symbol: "WFTM",
+      addr: (process.env.POLYGON_WFTM || "").toLowerCase(),
+      decimals: 18,
+    },
+    WGLMR: {
+      symbol: "WGLMR",
+      addr: (process.env.POLYGON_WGLMR || "").toLowerCase(),
+      decimals: 18,
+    },
+    WCELO: {
+      symbol: "WCELO",
+      addr: (process.env.POLYGON_WCELO || "").toLowerCase(),
+      decimals: 18,
+    },
+    WKAVA: {
+      symbol: "WKAVA",
+      addr: (process.env.POLYGON_WKAVA || "").toLowerCase(),
       decimals: 18,
     },
     MATIC: {
@@ -315,7 +369,7 @@ const TOKENS_BY_CHAIN = {
     },
   },
 
-  // ---------- BASE ----------
+  // ----- BASE -----
   base: {
     USDC: {
       symbol: "USDC",
@@ -331,86 +385,53 @@ const TOKENS_BY_CHAIN = {
           "0x4200000000000000000000000000000000000006").toLowerCase(),
       decimals: 18,
     },
+
     USDT: {
       symbol: "USDT",
-      addr:
-        (process.env.BASE_USDT ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.BASE_USDT || "").toLowerCase(),
       decimals: 6,
     },
     DAI: {
       symbol: "DAI",
-      addr:
-        (process.env.BASE_DAI ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.BASE_DAI || "").toLowerCase(),
       decimals: 18,
     },
+    FRAX: {
+      symbol: "FRAX",
+      addr: (process.env.BASE_FRAX || "").toLowerCase(),
+      decimals: 18,
+    },
+    TUSD: {
+      symbol: "TUSD",
+      addr: (process.env.BASE_TUSD || "").toLowerCase(),
+      decimals: 18,
+    },
+
     ARB: {
       symbol: "ARB",
-      addr:
-        (process.env.BASE_ARB ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.BASE_ARB || "").toLowerCase(),
       decimals: 18,
     },
+
     WBTC: {
       symbol: "WBTC",
-      addr:
-        (process.env.BASE_WBTC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.BASE_WBTC || "").toLowerCase(),
       decimals: 8,
     },
-    UNI: {
-      symbol: "UNI",
-      addr:
-        (process.env.BASE_UNI ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+
+    LINK: {
+      symbol: "LINK",
+      addr: (process.env.BASE_LINK || "").toLowerCase(),
       decimals: 18,
     },
-    CRV: {
-      symbol: "CRV",
-      addr:
-        (process.env.BASE_CRV ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
-      decimals: 18,
-    },
-    SNX: {
-      symbol: "SNX",
-      addr:
-        (process.env.BASE_SNX ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
-      decimals: 18,
-    },
-    BAL: {
-      symbol: "BAL",
-      addr:
-        (process.env.BASE_BAL ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
-      decimals: 18,
-    },
-    COMP: {
-      symbol: "COMP",
-      addr:
-        (process.env.BASE_COMP ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
-      decimals: 18,
-    },
-    MKR: {
-      symbol: "MKR",
-      addr:
-        (process.env.BASE_MKR ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
-      decimals: 18,
-    },
-    SUSHI: {
-      symbol: "SUSHI",
-      addr:
-        (process.env.BASE_SUSHI ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+    AAVE: {
+      symbol: "AAVE",
+      addr: (process.env.BASE_AAVE || "").toLowerCase(),
       decimals: 18,
     },
   },
 
-  // ---------- ARBITRUM ----------
+  // ----- ARBITRUM -----
   arbitrum: {
     USDC: {
       symbol: "USDC",
@@ -418,13 +439,6 @@ const TOKENS_BY_CHAIN = {
         (process.env.ARB_USDC ||
           "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(),
       decimals: 6,
-    },
-    WETH: {
-      symbol: "WETH",
-      addr:
-        (process.env.ARB_WETH ||
-          "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(),
-      decimals: 18,
     },
     USDT: {
       symbol: "USDT",
@@ -440,13 +454,32 @@ const TOKENS_BY_CHAIN = {
           "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(),
       decimals: 18,
     },
-    ARB: {
-      symbol: "ARB",
-      addr:
-        (process.env.ARB_ARB ||
-          "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(),
+    FRAX: {
+      symbol: "FRAX",
+      addr: (process.env.ARB_FRAX || "").toLowerCase(),
       decimals: 18,
     },
+    TUSD: {
+      symbol: "TUSD",
+      addr: (process.env.ARB_TUSD || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    WETH: {
+      symbol: "WETH",
+      addr:
+        (process.env.ARB_WETH ||
+          "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(),
+      decimals: 18,
+    },
+    WBTC: {
+      symbol: "WBTC",
+      addr:
+        (process.env.ARB_WBTC ||
+          "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(),
+      decimals: 8,
+    },
+
     LINK: {
       symbol: "LINK",
       addr:
@@ -461,13 +494,14 @@ const TOKENS_BY_CHAIN = {
           "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(),
       decimals: 18,
     },
-    WBTC: {
-      symbol: "WBTC",
+    ARB: {
+      symbol: "ARB",
       addr:
-        (process.env.ARB_WBTC ||
-          "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(),
-      decimals: 8,
+        (process.env.ARB_ARB ||
+          "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(),
+      decimals: 18,
     },
+
     UNI: {
       symbol: "UNI",
       addr:
@@ -482,18 +516,18 @@ const TOKENS_BY_CHAIN = {
           "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(),
       decimals: 18,
     },
-    SNX: {
-      symbol: "SNX",
-      addr:
-        (process.env.ARB_SNX ||
-          "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(),
-      decimals: 18,
-    },
     BAL: {
       symbol: "BAL",
       addr:
         (process.env.ARB_BAL ||
           "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.ARB_SNX ||
+          "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(),
       decimals: 18,
     },
     COMP: {
@@ -517,10 +551,22 @@ const TOKENS_BY_CHAIN = {
           "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(),
       decimals: 18,
     },
+
+    GMX: {
+      symbol: "GMX",
+      addr: (process.env.ARB_GMX || "").toLowerCase(),
+      decimals: 18,
+    },
+    PENDLE: {
+      symbol: "PENDLE",
+      addr: (process.env.ARB_PENDLE || "").toLowerCase(),
+      decimals: 18,
+    },
   },
 
-  // Остальные сети (минимум USDC/WETH; дальше можно расширять по аналогии)
+  // ----- ETHEREUM (ВСЕ 60+ ТВОИХ МОНЕТ ТУТ) -----
   ethereum: {
+    // stable
     USDC: {
       symbol: "USDC",
       addr:
@@ -528,6 +574,32 @@ const TOKENS_BY_CHAIN = {
           "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").toLowerCase(),
       decimals: 6,
     },
+    USDT: {
+      symbol: "USDT",
+      addr:
+        (process.env.ETH_USDT ||
+          "0xdAC17F958D2ee523a2206206994597C13D831ec7").toLowerCase(),
+      decimals: 6,
+    },
+    DAI: {
+      symbol: "DAI",
+      addr:
+        (process.env.ETH_DAI ||
+          "0x6B175474E89094C44Da98b954EedeAC495271d0F").toLowerCase(),
+      decimals: 18,
+    },
+    FRAX: {
+      symbol: "FRAX",
+      addr: (process.env.ETH_FRAX || "").toLowerCase(),
+      decimals: 18,
+    },
+    TUSD: {
+      symbol: "TUSD",
+      addr: (process.env.ETH_TUSD || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    // majors
     WETH: {
       symbol: "WETH",
       addr:
@@ -535,8 +607,210 @@ const TOKENS_BY_CHAIN = {
           "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").toLowerCase(),
       decimals: 18,
     },
+    WBTC: {
+      symbol: "WBTC",
+      addr:
+        (process.env.ETH_WBTC ||
+          "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").toLowerCase(),
+      decimals: 8,
+    },
+    WMATIC: {
+      symbol: "WMATIC",
+      addr: (process.env.ETH_WMATIC || "").toLowerCase(),
+      decimals: 18,
+    },
+    WAVAX: {
+      symbol: "WAVAX",
+      addr: (process.env.ETH_WAVAX || "").toLowerCase(),
+      decimals: 18,
+    },
+    WBNB: {
+      symbol: "WBNB",
+      addr: (process.env.ETH_WBNB || "").toLowerCase(),
+      decimals: 18,
+    },
+    WFTM: {
+      symbol: "WFTM",
+      addr: (process.env.ETH_WFTM || "").toLowerCase(),
+      decimals: 18,
+    },
+    WGLMR: {
+      symbol: "WGLMR",
+      addr: (process.env.ETH_WGLMR || "").toLowerCase(),
+      decimals: 18,
+    },
+    WCELO: {
+      symbol: "WCELO",
+      addr: (process.env.ETH_WCELO || "").toLowerCase(),
+      decimals: 18,
+    },
+    WKAVA: {
+      symbol: "WKAVA",
+      addr: (process.env.ETH_WKAVA || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    // bluechips
+    UNI: {
+      symbol: "UNI",
+      addr:
+        (process.env.ETH_UNI ||
+          "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984").toLowerCase(),
+      decimals: 18,
+    },
+    AAVE: {
+      symbol: "AAVE",
+      addr:
+        (process.env.ETH_AAVE ||
+          "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9").toLowerCase(),
+      decimals: 18,
+    },
+    LINK: {
+      symbol: "LINK",
+      addr:
+        (process.env.ETH_LINK ||
+          "0x514910771AF9Ca656af840dff83E8264EcF986CA").toLowerCase(),
+      decimals: 18,
+    },
+    CRV: {
+      symbol: "CRV",
+      addr:
+        (process.env.ETH_CRV ||
+          "0xD533a949740bb3306d119CC777fa900bA034cd52").toLowerCase(),
+      decimals: 18,
+    },
+    BAL: {
+      symbol: "BAL",
+      addr:
+        (process.env.ETH_BAL ||
+          "0xba100000625a3754423978a60c9317c58a424e3D").toLowerCase(),
+      decimals: 18,
+    },
+    SNX: {
+      symbol: "SNX",
+      addr:
+        (process.env.ETH_SNX ||
+          "0xC011A72400E58ecD99Ee497CF89E3775d4bd732F").toLowerCase(),
+      decimals: 18,
+    },
+    COMP: {
+      symbol: "COMP",
+      addr:
+        (process.env.ETH_COMP ||
+          "0xc00e94Cb662C3520282E6f5717214004A7f26888").toLowerCase(),
+      decimals: 18,
+    },
+    MKR: {
+      symbol: "MKR",
+      addr:
+        (process.env.ETH_MKR ||
+          "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2").toLowerCase(),
+      decimals: 18,
+    },
+
+    // L2 tokens (orig on L2, тут — только если задашь адреса)
+    ARB: {
+      symbol: "ARB",
+      addr: (process.env.ETH_ARB || "").toLowerCase(),
+      decimals: 18,
+    },
+    OP: {
+      symbol: "OP",
+      addr: (process.env.ETH_OP || "").toLowerCase(),
+      decimals: 18,
+    },
+    METIS: {
+      symbol: "METIS",
+      addr: (process.env.ETH_METIS || "").toLowerCase(),
+      decimals: 18,
+    },
+
+    // extra liquidity + прочие
+    SUSHI: {
+      symbol: "SUSHI",
+      addr:
+        (process.env.ETH_SUSHI ||
+          "0x6B3595068778DD592e39A122f4f5a5CF09C90fE2").toLowerCase(),
+      decimals: 18,
+    },
+    "1INCH": {
+      symbol: "1INCH",
+      addr: (process.env.ETH_1INCH || "").toLowerCase(),
+      decimals: 18,
+    },
+    CAKE: {
+      symbol: "CAKE",
+      addr: (process.env.ETH_CAKE || "").toLowerCase(),
+      decimals: 18,
+    },
+    GMX: {
+      symbol: "GMX",
+      addr: (process.env.ETH_GMX || "").toLowerCase(),
+      decimals: 18,
+    },
+    JOE: {
+      symbol: "JOE",
+      addr: (process.env.ETH_JOE || "").toLowerCase(),
+      decimals: 18,
+    },
+    QUICK: {
+      symbol: "QUICK",
+      addr: (process.env.ETH_QUICK || "").toLowerCase(),
+      decimals: 18,
+    },
+    PENDLE: {
+      symbol: "PENDLE",
+      addr: (process.env.ETH_PENDLE || "").toLowerCase(),
+      decimals: 18,
+    },
+    LDO: {
+      symbol: "LDO",
+      addr: (process.env.ETH_LDO || "").toLowerCase(),
+      decimals: 18,
+    },
+    GNO: {
+      symbol: "GNO",
+      addr: (process.env.ETH_GNO || "").toLowerCase(),
+      decimals: 18,
+    },
+    RPL: {
+      symbol: "RPL",
+      addr: (process.env.ETH_RPL || "").toLowerCase(),
+      decimals: 18,
+    },
+    COW: {
+      symbol: "COW",
+      addr: (process.env.ETH_COW || "").toLowerCase(),
+      decimals: 18,
+    },
+    RNDR: {
+      symbol: "RNDR",
+      addr: (process.env.ETH_RNDR || "").toLowerCase(),
+      decimals: 18,
+    },
+    INJ: {
+      symbol: "INJ",
+      addr: (process.env.ETH_INJ || "").toLowerCase(),
+      decimals: 18,
+    },
+    TIA: {
+      symbol: "TIA",
+      addr: (process.env.ETH_TIA || "").toLowerCase(),
+      decimals: 18,
+    },
+    STRK: {
+      symbol: "STRK",
+      addr: (process.env.ETH_STRK || "").toLowerCase(),
+      decimals: 18,
+    },
+    ZRO: {
+      symbol: "ZRO",
+      addr: (process.env.ETH_ZRO || "").toLowerCase(),
+      decimals: 18,
+    },
   },
 
+  // остальные сети – минимальный набор USDC/WETH, при желании расширяешь по аналогии
   optimism: {
     USDC: {
       symbol: "USDC",
@@ -553,7 +827,6 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   bsc: {
     USDC: {
       symbol: "USDC",
@@ -570,7 +843,6 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   avalanche: {
     USDC: {
       symbol: "USDC",
@@ -587,7 +859,6 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   fantom: {
     USDC: {
       symbol: "USDC",
@@ -604,7 +875,6 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   gnosis: {
     USDC: {
       symbol: "USDC",
@@ -621,7 +891,6 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   zksync: {
     USDC: {
       symbol: "USDC",
@@ -638,13 +907,10 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   linea: {
     USDC: {
       symbol: "USDC",
-      addr:
-        (process.env.LINEA_USDC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.LINEA_USDC || "").toLowerCase(),
       decimals: 6,
     },
     WETH: {
@@ -655,13 +921,10 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   scroll: {
     USDC: {
       symbol: "USDC",
-      addr:
-        (process.env.SCROLL_USDC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.SCROLL_USDC || "").toLowerCase(),
       decimals: 6,
     },
     WETH: {
@@ -672,30 +935,22 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   polygon_zkevm: {
     USDC: {
       symbol: "USDC",
-      addr:
-        (process.env.PZK_USDC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.PZK_USDC || "").toLowerCase(),
       decimals: 6,
     },
     WETH: {
       symbol: "WETH",
-      addr:
-        (process.env.PZK_WETH ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.PZK_WETH || "").toLowerCase(),
       decimals: 18,
     },
   },
-
   mantle: {
     USDC: {
       symbol: "USDC",
-      addr:
-        (process.env.MANTLE_USDC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.MANTLE_USDC || "").toLowerCase(),
       decimals: 6,
     },
     WETH: {
@@ -706,13 +961,10 @@ const TOKENS_BY_CHAIN = {
       decimals: 18,
     },
   },
-
   blast: {
     USDC: {
       symbol: "USDC",
-      addr:
-        (process.env.BLAST_USDC ||
-          "0x0000000000000000000000000000000000000000").toLowerCase(),
+      addr: (process.env.BLAST_USDC || "").toLowerCase(),
       decimals: 6,
     },
     WETH: {
@@ -725,21 +977,19 @@ const TOKENS_BY_CHAIN = {
   },
 };
 
-// WATCH — общий список монет (там, где есть в TOKENS_BY_CHAIN)
+// WATCH — только те, что реально хочешь сканить
 const WATCH = String(
   process.env.WATCH ||
-    "LINK,WMATIC,AAVE,WETH,USDT,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI"
+    "LINK,WMATIC,AAVE,WETH,USDT,USDC,DAI,ARB,MATIC,WBTC,UNI,CRV,SNX,BAL,COMP,MKR,SUSHI"
 )
   .split(",")
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
-// флаг для возможного отключения агрегаторов (Odos/Curve)
 const DISABLE_AGGREGATORS =
   String(process.env.DISABLE_AGGREGATORS || "0") === "1";
 
 // ---------- VENUES / ROUTERS / QUOTERS ----------
-
 const UNI_QUOTER_V2_BY_CHAIN = {
   polygon: (
     process.env.UNI_QUOTER_V2_POLYGON ||
@@ -755,7 +1005,6 @@ const UNI_QUOTER_V2_BY_CHAIN = {
     process.env.UNI_QUOTER_V2_ARB ||
     "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
   ).toLowerCase(),
-
   ethereum: (
     process.env.UNI_QUOTER_V2_ETH ||
     "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
@@ -811,7 +1060,6 @@ const UNI_FEES = (process.env.UNI_FEES || "500,3000,10000")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x > 0);
 
-// V2 роутеры по сетям. Если адрес = 0x000... — просто не будет использован.
 const ROUTERS_V2_BY_CHAIN = {
   polygon: {
     Sushi: (
@@ -835,7 +1083,6 @@ const ROUTERS_V2_BY_CHAIN = {
       "0xC873fEcbd354f5A56E00E710B90EF4201db2448d"
     ).toLowerCase(),
   },
-
   ethereum: {
     Sushi: (
       process.env.SUSHI_ROUTER_ETH ||
@@ -914,7 +1161,6 @@ const ODOS_QUOTE_V3 = "https://api.odos.xyz/sor/quote/v3";
 const ODOS_QUOTE_V2 = "https://api.odos.xyz/sor/quote/v2";
 const ODOS_TIMEOUT_MS = Number(process.env.ODOS_TIMEOUT_MS || 8000);
 
-
 // ---------- STATE ----------
 const STATE_PATH = path.join(__dirname, "state.json");
 
@@ -964,7 +1210,7 @@ async function tgBroadcast(html) {
   }
 }
 
-// ---------- HTML SAFE HELPERS ----------
+// ---------- HTML HELPERS ----------
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -980,8 +1226,11 @@ function linkA(text, url) {
 
 // ---------- LINKS ----------
 function uniswapLink(chainKey, input, output) {
-  const chain =
-    chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
+  let chain = "mainnet";
+  if (chainKey === "polygon") chain = "polygon";
+  else if (chainKey === "base") chain = "base";
+  else if (chainKey === "arbitrum") chain = "arbitrum";
+  else if (chainKey === "optimism") chain = "optimism";
   return `https://app.uniswap.org/swap?chain=${chain}&inputCurrency=${input}&outputCurrency=${output}`;
 }
 
@@ -989,7 +1238,6 @@ function odosLink(chainId, input, output) {
   return `https://app.odos.xyz/?chainId=${chainId}&inputTokens=${input}&outputTokens=${output}`;
 }
 
-// V2-style router UIs
 function sushiSwapLink(token0, token1) {
   return `https://www.sushi.com/polygon/swap?token0=${token0}&token1=${token1}`;
 }
@@ -1004,7 +1252,11 @@ function camelotLink(token0, token1) {
 }
 function curveLink(chainKey, token0, token1) {
   const chain =
-    chainKey === "polygon" ? "polygon" : chainKey === "base" ? "base" : "arbitrum";
+    chainKey === "polygon"
+      ? "polygon"
+      : chainKey === "base"
+      ? "base"
+      : "arbitrum";
   return `https://curve.fi/#/${chain}/swap?from=${token0}&to=${token1}`;
 }
 
@@ -1027,9 +1279,13 @@ function listVenuesForChain(chainKey) {
   const venues = [];
   const v2 = ROUTERS_V2_BY_CHAIN[chainKey] || {};
   for (const [name, addr] of Object.entries(v2)) {
-    if (addr && addr !== "0x0000000000000000000000000000000000000000") venues.push(name);
+    if (addr && addr !== "0x0000000000000000000000000000000000000000")
+      venues.push(name);
   }
-  if (UNI_QUOTER_V2_BY_CHAIN[chainKey]) venues.push("Uniswap");
+  if (UNI_QUOTER_V2_BY_CHAIN[chainKey] &&
+      UNI_QUOTER_V2_BY_CHAIN[chainKey] !== "0x0000000000000000000000000000000000000000") {
+    venues.push("Uniswap");
+  }
   if (!DISABLE_AGGREGATORS) {
     venues.push("Odos");
     venues.push("Curve");
@@ -1056,7 +1312,7 @@ function v2RouterAddr(chainKey, venue) {
   return (m[venue] || "").toLowerCase();
 }
 
-// BUY on V2: USDC -> TOKEN
+// BUY on V2
 async function quoteV2_STABLE_to_TOKEN_best(
   provider,
   chainKey,
@@ -1073,8 +1329,8 @@ async function quoteV2_STABLE_to_TOKEN_best(
 
   const candidates = [
     [stable.addr, tokenAddr],
-    t.WETH ? [stable.addr, t.WETH.addr, tokenAddr] : null,
-    t.WMATIC ? [stable.addr, t.WMATIC.addr, tokenAddr] : null,
+    t.WETH && t.WETH.addr ? [stable.addr, t.WETH.addr, tokenAddr] : null,
+    t.WMATIC && t.WMATIC.addr ? [stable.addr, t.WMATIC.addr, tokenAddr] : null,
   ].filter(Boolean);
 
   const out = await quoteV2_bestAmountsOut(provider, routerAddr, amountIn, candidates);
@@ -1082,7 +1338,7 @@ async function quoteV2_STABLE_to_TOKEN_best(
   return out;
 }
 
-// SELL on V2: TOKEN -> USDC
+// SELL on V2
 async function quoteV2_TOKEN_to_STABLE_best(
   provider,
   chainKey,
@@ -1097,8 +1353,8 @@ async function quoteV2_TOKEN_to_STABLE_best(
   const t = TOKENS_BY_CHAIN[chainKey];
   const candidates = [
     [tokenAddr, stable.addr],
-    t.WETH ? [tokenAddr, t.WETH.addr, stable.addr] : null,
-    t.WMATIC ? [tokenAddr, t.WMATIC.addr, stable.addr] : null,
+    t.WETH && t.WETH.addr ? [tokenAddr, t.WETH.addr, stable.addr] : null,
+    t.WMATIC && t.WMATIC.addr ? [tokenAddr, t.WMATIC.addr, stable.addr] : null,
   ].filter(Boolean);
 
   const out = await quoteV2_bestAmountsOut(
@@ -1111,7 +1367,7 @@ async function quoteV2_TOKEN_to_STABLE_best(
   return out;
 }
 
-// Uniswap V3: exact input single
+// Uniswap V3
 async function quoteUniV3_bestExactIn(
   provider,
   chainKey,
@@ -1120,7 +1376,9 @@ async function quoteUniV3_bestExactIn(
   amountIn
 ) {
   const quoterAddr = UNI_QUOTER_V2_BY_CHAIN[chainKey];
-  if (!quoterAddr) return null;
+  if (!quoterAddr ||
+      quoterAddr === "0x0000000000000000000000000000000000000000")
+    return null;
 
   const q = new ethers.Contract(quoterAddr, uniQuoterV2Abi, provider);
   let best = null;
@@ -1179,7 +1437,7 @@ async function quoteUni_TOKEN_to_STABLE_best(
   return best.amountOut;
 }
 
-// Odos quote
+// Odos
 async function quoteOdos(chainId, inputAddr, inputAmountBase, outputAddr) {
   const body = {
     chainId,
@@ -1277,7 +1535,7 @@ function emojiForPct(p) {
   return "❌";
 }
 
-// ---------- RISK LEVEL ----------
+// ---------- RISK ----------
 function riskLevelFromSamples(statePair) {
   const s = Array.isArray(statePair?.samples) ? statePair.samples : [];
   if (s.length < 2) return { level: "MED", emoji: "⚠️" };
@@ -1472,7 +1730,14 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
 
   async function profitForSize(size) {
     try {
-      const tokenOut = await quoteBuy(chain, provider, buyVenue, stable, tokenAddr, size);
+      const tokenOut = await quoteBuy(
+        chain,
+        provider,
+        buyVenue,
+        stable,
+        tokenAddr,
+        size
+      );
       const tokenOutNet = haircutBase(tokenOut, SLIPPAGE_BUY_PCT);
       let stableOut = await quoteSell(
         chain,
@@ -1518,7 +1783,7 @@ async function refineBestSize(chain, provider, stable, tokenAddr, basePick) {
   return { ...basePick, size: bestSize, pct: bestPct };
 }
 
-// ---------- MESSAGE BUILDER ----------
+// ---------- MESSAGE ----------
 function buildSignalMessage({
   chain,
   sym,
@@ -1605,7 +1870,7 @@ async function sendDemoSignalForChain(provider, chain, sym) {
   const tAll = TOKENS_BY_CHAIN[chain.key] || {};
   const t = tAll[sym];
   const stable = tAll.USDC;
-  if (!t || !stable) return;
+  if (!t || !t.addr || !stable || !stable.addr) return;
 
   const perSizeLines = [];
   let bestAcrossAll = -999;
@@ -1675,7 +1940,6 @@ async function main() {
   for (const chain of CHAINS) {
     const provider = new ethers.JsonRpcProvider(chain.rpcUrl);
 
-    // sanity: rpc chain must match
     try {
       const net = await provider.getNetwork();
       const rpcChain = Number(net.chainId);
@@ -1692,43 +1956,47 @@ async function main() {
 
     const tAll = TOKENS_BY_CHAIN[chain.key] || {};
     const stable = tAll.USDC;
-    if (!stable) continue;
+    if (!stable || !stable.addr) continue;
 
-    // Demo once per manual run per chain
     if (eventName === "workflow_dispatch" && SEND_DEMO_ON_MANUAL) {
-      if (chain.key !== "polygon") continue;
-      const tagKey = `demoSentTag:${chain.key}`;
-      if (state.meta[tagKey] !== demoTag) {
-        try {
-          let demoSym = tAll.LINK ? "LINK" : tAll.WETH ? "WETH" : null;
-          if (!demoSym) {
-            for (const s of WATCH) {
-              if (tAll[s]) {
-                demoSym = s;
-                break;
+      if (chain.key === "polygon") {
+        const tagKey = `demoSentTag:${chain.key}`;
+        if (state.meta[tagKey] !== demoTag) {
+          try {
+            let demoSym = tAll.LINK && tAll.LINK.addr
+              ? "LINK"
+              : tAll.WETH && tAll.WETH.addr
+              ? "WETH"
+              : null;
+            if (!demoSym) {
+              for (const s of WATCH) {
+                if (tAll[s] && tAll[s].addr) {
+                  demoSym = s;
+                  break;
+                }
               }
             }
+            if (demoSym) {
+              await sendDemoSignalForChain(provider, chain, demoSym);
+              state.meta[tagKey] = demoTag;
+              state.meta[`demoSentAt:${chain.key}`] = nowSec();
+              writeState(state);
+            }
+          } catch (e) {
+            console.error(
+              "DEMO ERROR:",
+              chain.key,
+              e?.response?.status,
+              e?.response?.data || e?.message || e
+            );
           }
-          if (demoSym) {
-            await sendDemoSignalForChain(provider, chain, demoSym);
-            state.meta[tagKey] = demoTag;
-            state.meta[`demoSentAt:${chain.key}`] = nowSec();
-            writeState(state);
-          }
-        } catch (e) {
-          console.error(
-            "DEMO ERROR:",
-            chain.key,
-            e?.response?.status,
-            e?.response?.data || e?.message || e
-          );
         }
       }
     }
 
     for (const sym of WATCH) {
       const t = tAll[sym];
-      if (!t) continue;
+      if (!t || !t.addr) continue;
 
       const primarySize = 1000;
       const primaryKey = `${chain.key}:${sym}:USDC:${primarySize}`;
