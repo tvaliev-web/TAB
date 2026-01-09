@@ -101,13 +101,13 @@ const TOKENS_POLYGON = {
   USDC: { symbol: "USDC", addr: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174".toLowerCase(), decimals: 6 },
   LINK: { symbol: "LINK", addr: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39".toLowerCase(), decimals: 18 },
   WMATIC: { symbol: "WMATIC", addr: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270".toLowerCase(), decimals: 18 },
-  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cF1b9f619".toLowerCase(), decimals: 18 },
+  WETH: { symbol: "WETH", addr: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619".toLowerCase(), decimals: 18 },
   AAVE: { symbol: "AAVE", addr: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B".toLowerCase(), decimals: 18 },
   USDT: { symbol: "USDT", addr: (process.env.POLYGON_USDT || "0xc2132D05D31c914a87C6611C10748AaCBbD4d7E").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.POLYGON_DAI  || "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063").toLowerCase(), decimals: 18 },
 
   // ДОБАВЛЕННЫЕ ТОКЕНЫ (Polygon)
-  WBTC:  { symbol: "WBTC",  addr: (process.env.POLYGON_WBTC  || "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6").toLowerCase(), decimals: 8 },
+  WBTC:  { symbol: "WBTC",  addr: (process.env.POLYGON_WBTC  || "0x1BFD67037B42Cf73acf2047067bd4F2C47D9BfD6").toLowerCase(), decimals: 8 },
   UNI:   { symbol: "UNI",   addr: (process.env.POLYGON_UNI   || "0xb33EaAd8d922B1083446DC23f610c2567fB5180f").toLowerCase(), decimals: 18 },
   CRV:   { symbol: "CRV",   addr: (process.env.POLYGON_CRV   || "0x172370d5Cd63279eFa6d502DAB29171933a610AF").toLowerCase(), decimals: 18 },
   SNX:   { symbol: "SNX",   addr: (process.env.POLYGON_SNX   || "0x50B728D8D964fd00C2d0AAD81718B71311fef68a").toLowerCase(), decimals: 18 },
@@ -124,19 +124,39 @@ const TOKENS_BASE = {
   WETH: { symbol: "WETH", addr: (process.env.BASE_WETH || "0x4200000000000000000000000000000000000006").toLowerCase(), decimals: 18 },
   USDT: process.env.BASE_USDT ? { symbol: "USDT", addr: process.env.BASE_USDT.toLowerCase(), decimals: 6 } : null,
   DAI:  process.env.BASE_DAI  ? { symbol: "DAI",  addr: process.env.BASE_DAI.toLowerCase(),  decimals: 18 } : null,
-  ARB:  process.env.BASE_ARB  ? { symbol: "ARB",  addr: process.env.BASE_ARB.toLowerCase(),  decimals: 18 } : null
+  ARB:  process.env.BASE_ARB  ? { symbol: "ARB",  addr: process.env.BASE_ARB.toLowerCase(),  decimals: 18 } : null,
+
+  // расширение на Base — только если задан ENV
+  WBTC:  process.env.BASE_WBTC  ? { symbol: "WBTC",  addr: process.env.BASE_WBTC.toLowerCase(),  decimals: 8  } : null,
+  UNI:   process.env.BASE_UNI   ? { symbol: "UNI",   addr: process.env.BASE_UNI.toLowerCase(),   decimals: 18 } : null,
+  CRV:   process.env.BASE_CRV   ? { symbol: "CRV",   addr: process.env.BASE_CRV.toLowerCase(),   decimals: 18 } : null,
+  SNX:   process.env.BASE_SNX   ? { symbol: "SNX",   addr: process.env.BASE_SNX.toLowerCase(),   decimals: 18 } : null,
+  BAL:   process.env.BASE_BAL   ? { symbol: "BAL",   addr: process.env.BASE_BAL.toLowerCase(),   decimals: 18 } : null,
+  COMP:  process.env.BASE_COMP  ? { symbol: "COMP",  addr: process.env.BASE_COMP.toLowerCase(),  decimals: 18 } : null,
+  MKR:   process.env.BASE_MKR   ? { symbol: "MKR",   addr: process.env.BASE_MKR.toLowerCase(),   decimals: 18 } : null,
+  SUSHI: process.env.BASE_SUSHI ? { symbol: "SUSHI", addr: process.env.BASE_SUSHI.toLowerCase(), decimals: 18 } : null
 };
 
 const TOKENS_ARBITRUM = {
-  USDC: { symbol: "USDC", addr: (process.env.ARB_USDC || "0xaf88d065e77c8cC2239327C5EDb3A432268e5831").toLowerCase(), decimals: 6 },
+  USDC: { symbol: "USDC", addr: (process.env.ARB_USDC || "0xaf88d065e77c8C2239327C5EDb3A432268e5831").toLowerCase(), decimals: 6 },
   WETH: { symbol: "WETH", addr: (process.env.ARB_WETH || "0x82af49447d8a07e3bd95bd0d56f35241523fbab1").toLowerCase(), decimals: 18 },
   USDT: { symbol: "USDT", addr: (process.env.ARB_USDT || "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9").toLowerCase(), decimals: 6 },
   DAI:  { symbol: "DAI",  addr: (process.env.ARB_DAI  || "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1").toLowerCase(), decimals: 18 },
   ARB:  { symbol: "ARB",  addr: (process.env.ARB_ARB  || "0x912ce59144191c1204e64559fe8253a0e49e6548").toLowerCase(), decimals: 18 },
 
-  // ДОБАВЛЕННЫЕ LINK И AAVE НА ARBITRUM
-  LINK: { symbol: "LINK", addr: (process.env.ARB_LINK || "0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7").toLowerCase(), decimals: 18 },
-  AAVE:{ symbol: "AAVE", addr: (process.env.ARB_AAVE || "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(), decimals: 18 }
+  // LINK и AAVE на Arbitrum (тоже вшиты, ENV только как override)
+  LINK: { symbol: "LINK", addr: (process.env.ARB_LINK || "0xf97f4df75117a78c1A5a0DBb814Af92458539FB4").toLowerCase(), decimals: 18 },
+  AAVE:{ symbol: "AAVE", addr: (process.env.ARB_AAVE || "0xba5DdD1f9d7F570dc94a51479a000E3BCE967196").toLowerCase(), decimals: 18 },
+
+  // ДОБАВЛЕННЫЕ ТОКЕНЫ (Arbitrum) — ВСЕ СРАЗУ, без null
+  WBTC:  { symbol: "WBTC",  addr: (process.env.ARB_WBTC  || "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f").toLowerCase(), decimals: 8  },
+  UNI:   { symbol: "UNI",   addr: (process.env.ARB_UNI   || "0xfa7F8980B0f1E64A2062791cc3b0871572f1F7f0").toLowerCase(), decimals: 18 },
+  CRV:   { symbol: "CRV",   addr: (process.env.ARB_CRV   || "0x11CDb42B0EB46D95f990BEdD4695A6e3FA34fC").toLowerCase(), decimals: 18 },
+  SNX:   { symbol: "SNX",   addr: (process.env.ARB_SNX   || "0x7f1f2e1C9c2d7CC0D643CCa0f1aF11FD78C9f09b").toLowerCase(), decimals: 18 },
+  BAL:   { symbol: "BAL",   addr: (process.env.ARB_BAL   || "0x040d1EdC9569d4Bab2D15287Dc5A4F10F56a56B8").toLowerCase(), decimals: 18 },
+  COMP:  { symbol: "COMP",  addr: (process.env.ARB_COMP  || "0xeCe2B6E5B563E9F4c2470Ff712F0C48E7893Efc0").toLowerCase(), decimals: 18 },
+  MKR:   { symbol: "MKR",   addr: (process.env.ARB_MKR   || "0x2E13e5eC7C6D2a5Ce094b6dA0FbA7740F9Ed79F1").toLowerCase(), decimals: 18 },
+  SUSHI: { symbol: "SUSHI", addr: (process.env.ARB_SUSHI || "0xd4d42f0b6DeF4ce0383636770eF773390d85C61A").toLowerCase(), decimals: 18 }
 };
 
 const TOKENS_BY_CHAIN = {
@@ -469,7 +489,7 @@ function shouldSend(statePair, profitPctVal) {
   const lastSentProfit = statePair?.lastSentProfit ?? -999;
 
   if (!Number.isFinite(profitPctVal)) return { ok: false, reason: "nan" };
-  if (profitPctVal <= 0) return { ok: false, reason: "non_positive" }; // НЕ ОТПРАВЛЯЕМ ОТРИЦАТЕЛЬНЫЙ ПРОФИТ
+  if (profitPctVal <= 0) return { ok: false, reason: "non_positive" }; // отрицательные и ноль не шлём
   if (profitPctVal < MIN_PROFIT_PCT) return { ok: false, reason: "below_min" };
 
   const since = now - lastSentAt;
@@ -482,12 +502,12 @@ function shouldSend(statePair, profitPctVal) {
   return { ok: true, reason: "growth" };
 }
 
-// ---------- EMOJI (0.7% порог) ----------
+// ---------- EMOJI (порог под 0.4%) ----------
 function emojiForPct(p) {
   if (!Number.isFinite(p)) return "";
   if (p >= 1.5) return "🟢";
-  if (p >= 1.3) return "🟠";
-  if (p >= 0.7) return "🔴";
+  if (p >= 1.0) return "🟠";
+  if (p >= 0.4) return "🔴";
   return "❌";
 }
 
@@ -716,9 +736,9 @@ function buildSignalMessage({
     `${riskText}`,
     "",
     `🟢 ≥ 1.50%`,
-    `🟠 1.30–1.49%`,
-    `🔴 0.70–1.29%`,
-    `❌ below 0.70%`
+    `🟠 1.00–1.49%`,
+    `🔴 0.40–0.99%`,
+    `❌ below 0.40%`
   ].join("\n");
 }
 
